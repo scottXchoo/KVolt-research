@@ -1,0 +1,10 @@
+# Local experiment outputs and copied backend snapshots
+/artifacts/
+
+# Python bytecode and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# macOS metadata
+.DS_Store
