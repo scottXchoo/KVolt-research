@@ -136,3 +136,13 @@ def test_actual_native_attention_residual_update(gpu_context,gpu_attention,lengt
     else:
         assert candidate_cache[1].shape[-2]==(length+1)%128
     assert candidate_cache[5].shape[-2]==128  # V evicts one after residual128
+
+
+def test_attention_fixture_has_fp16_weights_and_original_fp32_rotary(gpu_context,gpu_attention):
+    torch,_,_,_=gpu_context
+    assert all(parameter.dtype==torch.float16 for parameter in gpu_attention.parameters())
+    rotary=dict(gpu_attention.rotary_emb.named_buffers())
+    assert 'inv_freq' in rotary
+    assert all(buffer.dtype==torch.float32 for buffer in rotary.values() if buffer.is_floating_point())
+    assert gpu_attention.rotary_emb.inv_freq.dtype==torch.float32
+    assert gpu_attention.rotary_emb.original_inv_freq.dtype==torch.float32

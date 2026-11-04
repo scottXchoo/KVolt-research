@@ -32,6 +32,14 @@ def gpu_context():
         torch.cuda.synchronize()
 
 
+def fp16_parameters_only(attention,torch):
+    """Match FP16 weights while preserving original FP32 RoPE buffers."""
+    with torch.no_grad():
+        for parameter in attention.parameters():
+            if parameter.is_floating_point():
+                parameter.data=parameter.data.to(dtype=torch.float16)
+
+
 @pytest.fixture(scope='module')
 def gpu_attention(gpu_context):
     """One unchanged native attention module, never full model weights."""
@@ -46,7 +54,8 @@ def gpu_attention(gpu_context):
     config.use_flash=True
     torch.manual_seed(20261104)
     with torch.device('cuda:0'):
-        attention=LlamaFlashAttention_KIVI(config).half().eval()
+        attention=LlamaFlashAttention_KIVI(config).eval()
+    fp16_parameters_only(attention,torch)
     yield attention
     del attention
     torch.cuda.empty_cache()

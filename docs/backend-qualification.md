@@ -58,8 +58,8 @@ The artificial cache matrix contains 9 T values × 5 G = 45 cases, each with all
 native fields. Independent quantizer-axis/bit/constant diagnostics add 5 cases.
 A one-attention native residual-forward diagnostic adds 45 cases across the same
 9 T × 5 G grid, comparing exact output/cache and T+1, K flush, and V eviction. It
-constructs one unchanged attention module with seeded FP16 random weights and
-artificial KV; it is separate from full model natural-EOS generation.
+constructs one unchanged attention module with seeded FP16 random weights,
+original FP32 rotary buffers, and artificial KV; it is separate from full model natural-EOS generation.
 The actual CUDA matmul/GQA diagnostic adds 5 cases × 7 one-hot input positions,
 checking every output column and every KV/query head. Its integer and
 power-of-two inputs produce exact values, so it uses zero tolerance, including

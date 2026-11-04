@@ -200,3 +200,25 @@ def test_existing_output_is_preserved_without_gpu_imports(tmp_path):
     assert result.returncode == 1 and 'output must be empty' in result.stderr
     assert evidence.read_text() == original
     assert not (tmp_path / 'unused.lock').exists()
+
+
+def test_attention_fixture_converts_parameters_without_touching_rotary_buffers():
+    import importlib.util
+    root=Path(__file__).resolve().parents[1]
+    spec=importlib.util.spec_from_file_location('b2_gpu_fixture',root/'tests/integration/conftest.py')
+    module=importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    class Data:
+        def __init__(self,dtype): self.dtype=dtype
+        def to(self,*,dtype): return Data(dtype)
+    class Parameter:
+        def __init__(self): self.data=Data('float32')
+        def is_floating_point(self): return True
+    parameters=[Parameter(),Parameter()]
+    rotary=Data('float32')
+    attention=SimpleNamespace(parameters=lambda:iter(parameters),rotary_emb=SimpleNamespace(inv_freq=rotary))
+    torch=SimpleNamespace(no_grad=nullcontext,float16='float16')
+    module.fp16_parameters_only(attention,torch)
+    assert all(parameter.data.dtype=='float16' for parameter in parameters)
+    assert attention.rotary_emb.inv_freq is rotary
+    assert attention.rotary_emb.inv_freq.dtype=='float32'
