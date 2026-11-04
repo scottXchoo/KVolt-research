@@ -222,3 +222,26 @@ def test_attention_fixture_converts_parameters_without_touching_rotary_buffers()
     assert all(parameter.data.dtype=='float16' for parameter in parameters)
     assert attention.rotary_emb.inv_freq is rotary
     assert attention.rotary_emb.inv_freq.dtype=='float32'
+
+
+def test_device_report_uses_structured_properties_without_repr():
+    import importlib.util
+    root=Path(__file__).resolve().parents[1]
+    spec=importlib.util.spec_from_file_location('b2_qualification_tool',root/'tools/qualify_backend.py')
+    module=importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    class Properties:
+        name='Orin'
+        major=8
+        minor=7
+        total_memory=32*1024**3
+        multi_processor_count=16
+        def __str__(self):
+            raise UnicodeDecodeError('utf-8',b'\x86',0,1,'invalid start byte')
+        __repr__=__str__
+    torch=SimpleNamespace(cuda=SimpleNamespace(get_device_properties=lambda index:Properties()),
+                          version=SimpleNamespace(cuda='12.6'))
+    report=module.device_report(torch)
+    assert report=={'name':'Orin','major':8,'minor':7,'total_memory':32*1024**3,
+                    'multi_processor_count':16,'torch_cuda':'12.6'}
+    assert json.loads(json.dumps(report,allow_nan=False))==report

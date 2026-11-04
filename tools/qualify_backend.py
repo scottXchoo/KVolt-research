@@ -35,6 +35,15 @@ def write_json(path, value):
     temporary.replace(path)
 
 
+def device_report(torch):
+    """Read stable fields; NVIDIA device-properties repr may contain bad UTF-8."""
+    properties=torch.cuda.get_device_properties(0)
+    return {'name':properties.name,'major':properties.major,'minor':properties.minor,
+            'total_memory':properties.total_memory,
+            'multi_processor_count':properties.multi_processor_count,
+            'torch_cuda':torch.version.cuda}
+
+
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--suite',choices=['smoke','full','boundaries'],required=True)
@@ -96,8 +105,7 @@ def main(argv=None):
             loaded=load_model(args.snapshot,RuntimeConfig(),kivi_root=args.kivi_root,raw_prefill=False)
             torch=loaded.torch
             write_json(args.output/(prefix+'.native-provenance.json'),loaded.provenance)
-            write_json(args.output/'device.json',{'name':torch.cuda.get_device_name(0),'properties':str(torch.cuda.get_device_properties(0)),
-                                                 'torch_cuda':torch.version.cuda})
+            write_json(args.output/'device.json',device_report(torch))
             reference={}
             def save_initial(key,cache):
                 # Both clone and contiguous are intentional: native tails may
