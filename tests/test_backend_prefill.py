@@ -210,6 +210,18 @@ def test_source_gate_rejects_changed_file_before_gpu_import(tmp_path):
     with pytest.raises(QualificationError): checked_file(path, '0' * 64)
 
 
+def test_provenance_native_loader_environment_is_specific_and_preserves_absence(monkeypatch):
+    import sys
+    from kvolt_runtime.backend.provenance import execution_environment
+    libraries = '/home/agx3/kvolt/.local/cusparselt/lib:/usr/local/cuda/lib64'
+    monkeypatch.setenv('LD_LIBRARY_PATH', libraries)
+    monkeypatch.setenv('UNRELATED_PRIVATE_VALUE', 'must-not-export')
+    assert execution_environment() == {'python_executable': sys.executable,
+                                       'LD_LIBRARY_PATH': libraries}
+    monkeypatch.delenv('LD_LIBRARY_PATH')
+    assert execution_environment()['LD_LIBRARY_PATH'] is None
+
+
 def test_attention_install_changes_only_instance_dispatch():
     class Base: pass
     class Storage(Tensor):

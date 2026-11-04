@@ -3,6 +3,7 @@ from contextlib import contextmanager
 import hashlib
 import importlib
 import importlib.metadata
+import os
 from pathlib import Path
 import sys
 
@@ -35,6 +36,12 @@ MODEL_FILES = {
     'model-00003-of-00004.safetensors': 'fc1cdddd6bfa91128d6e94ee73d0ce62bfcdb7af29e978ddcab30c66ae9ea7fa',
     'model-00004-of-00004.safetensors': '92ecfe1a2414458b4821ac8c13cf8cb70aed66b5eea8dc5ad9eeb4ff309d6d7b',
 }
+
+
+def execution_environment():
+    """Capture only the process fields needed to reproduce native-library loading."""
+    return {'python_executable': sys.executable,
+            'LD_LIBRARY_PATH': os.environ.get('LD_LIBRARY_PATH')}
 
 
 def digest(path):
@@ -81,7 +88,8 @@ def validate_sources(kivi_root, snapshot):
     model_files = {name: checked_file(snapshot / name, sha) for name, sha in MODEL_FILES.items()}
     return {'baseline_commit': BASELINE_COMMIT, 'kivi_upstream_commit': KIVI_COMMIT,
             'sources': sources, 'versions': versions, 'binaries': binaries,
-            'model_files': model_files, 'snapshot': str(snapshot)}
+            'model_files': model_files, 'snapshot': str(snapshot),
+            'execution_environment': execution_environment()}
 
 
 @contextmanager

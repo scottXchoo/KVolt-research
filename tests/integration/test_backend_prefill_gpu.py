@@ -40,6 +40,7 @@ def _cohort():
 def test_b1_raw_prefill_matches_native_first_token_and_reuses_one_model(monkeypatch):
     import fcntl
     from kvolt_runtime.backend.model import InferenceBackend, load_model, model_identity
+    from kvolt_runtime.backend.provenance import execution_environment
     from kvolt_runtime.config import RuntimeConfig
     from kvolt_runtime.contracts import CacheFormat
 
@@ -48,7 +49,8 @@ def test_b1_raw_prefill_matches_native_first_token_and_reuses_one_model(monkeypa
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report = {'schema': 'kvolt-b1-prefill-v1', 'cohort_sha256': COHORT_SHA256,
               'git_sha': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
-              'python': sys.version, 'status': 'running', 'requests': []}
+              'python': sys.version, 'execution_environment': execution_environment(),
+              'status': 'running', 'requests': []}
     # Existing project lock; fail immediately if another experiment owns it.
     with Path('/run/lock/kvolt-p3-hardware.lock').open('rb') as lock:
         try:
