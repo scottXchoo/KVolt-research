@@ -114,3 +114,67 @@ The native greedy reference does not call either deferred helper.
 
 This is M1 backend correctness qualification. It makes no PC/DC, LUT, DVFS,
 energy, performance, or full adaptive Runtime qualification claim.
+
+## Bounded natural first-token EOS follow-up
+
+`tools/qualify_first_eos.py` is a separate synthetic diagnostic authorized in
+RT-054. It does not modify the frozen 30-input cohort or extend Runtime LUT
+support beyond 1024..8192. Eight exact completed-dialogue prompts are constants
+in the tool: number-only addition, OK, oxygen symbol, Spanish cat, hello,
+opposite of hot, empty JSON, and Korean addition. Each contains its existing
+BOS, one user EOT, and an assistant answer without a trailing EOT. There is no
+EOS forcing, logit/model change, EOS suppression, padding, or input search.
+
+Preparation uses the pinned snapshot's Rust `tokenizers` encoding with
+`add_special_tokens=False`; it imports neither torch nor transformers and loads
+no model. It verifies both pinned tokenizer files, records exact prompt/token
+IDs and hashes, Git commit/status, repository root, source hashes, tokenizer
+revision/version, and all cases in `inputs.json` and `plan.json`. Prepare after
+the final clean commit, on the same checkout where the GPU run will execute.
+No source, Git state, tokenizer, inputs, or plan edits may occur after freeze.
+Both output directories must be empty. The run needs the independently retained
+input SHA256 printed by preparation. A one-use `run-attempt.json` reservation
+prevents another invocation of that frozen plan, including after a technical
+failure or a busy hardware lock; the harness never creates a replacement plan.
+
+```sh
+/home/agx3/kvolt/.venv/bin/python tools/qualify_first_eos.py --prepare-only \
+  --snapshot "$KVOLT_SNAPSHOT" --output artifacts/m1/first-eos-frozen
+# Retain the printed inputs_sha256 before any inference, then use that exact value:
+/home/agx3/kvolt/.venv/bin/python tools/qualify_first_eos.py \
+  --snapshot "$KVOLT_SNAPSHOT" --inputs artifacts/m1/first-eos-frozen/inputs.json \
+  --expected-input-sha256 <CPU_PREPARATION_SHA256> --output artifacts/m1/first-eos-run
+```
+
+The fixed plan has 8 prompts × 5 requested G values × Nmax=2 = 40 pairs,
+plus one native repeat per prompt at G32: 88 total generations. These are eight
+distinct diagnostic inputs, not 40 independent quality examples. Nmax=2 keeps
+natural first EOS distinguishable from the Nmax=1 shortcut. Native reference
+uses the unchanged loader with `raw_prefill=False` and `generate_reference`;
+candidate uses `generate_candidate`. Reference and candidate models run
+sequentially, with the reference unloaded before loading the candidate. The
+nonblocking hardware lock is acquired before torch/model imports. Stable
+fields in `device_report` avoid NVIDIA device-properties repr UTF-8 failures.
+Loader provenance and all raw output token IDs are retained. No settings or
+frequencies are changed, and there are no performance, energy, or SLO claims.
+
+A delegating spy observes only candidate public request API calls. A natural
+first-EOS pair must match exact token IDs, EOS stop, zero Decode forwards, and
+T=L; it must have prefill=1, packing=0, decode=0, release=1, RAW cache at release,
+RELEASED afterward, and a cleared active cache. First-EOS G is a requested
+comparison condition: quantization does not run in that branch. This M1 tool
+does not establish integrated DC behavior. Non-first-EOS inputs complete the
+normal branch up to Nmax=2 and retain exact IDs/stop/forward/T comparisons;
+initial packed-cache tensor proof is outside this follow-up's scope and remains
+covered by the existing B2 suites.
+
+All 40 pairs and eight native repeats must pass. Per-G coverage and covered
+case IDs are recorded. `first_eos_gpu_qualified` is true only when natural first
+EOS is actually observed and passes all checks in every requested G condition.
+No observation yields `bounded_search_complete_no_first_eos`, exit 0, and
+qualification false; there is no expanded search or retry. Partial G coverage
+also leaves qualification false. Technical failures preserve `error.json` with
+traceback, any completed outputs and spy evidence, and exit nonzero. Source,
+input, plan, Git and tokenizer identities are rechecked before model loading
+and at completion. CPU spy fixtures prove the harness checks only; they do not
+qualify natural EOS on a GPU.
