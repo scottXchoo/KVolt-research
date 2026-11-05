@@ -5,7 +5,7 @@ from ..config import EOS_TOKEN_IDS, GROUPS, require_int
 from ..errors import ContractError
 from .knee import KneeAdapter, validate_quality
 from .types import (
-    DecodeCandidate, DecodeDecision, DecodePrediction, FREQUENCIES_MHZ,
+    Bracket, DecodeCandidate, DecodeDecision, DecodePrediction, FREQUENCIES_MHZ,
     KneeResult, LUTRepository, elapsed_since, finite, length as validate_length,
 )
 
@@ -14,16 +14,22 @@ def _validate_decode(predictions, requested_length):
     expected = {(g, f) for g in GROUPS for f in FREQUENCIES_MHZ}
     if type(predictions) is not tuple or len(predictions) != len(expected):
         raise ContractError('Decode LUT must return an immutable tuple of all 40 combinations')
+    normalized = []
     for row in predictions:
         if not isinstance(row, DecodePrediction):
             raise ContractError('Decode LUT must return DecodePrediction rows')
-        DecodePrediction(row.length, row.group, row.frequency_mhz, row.tpot_s,
-                         row.energy_j_per_token, row.bracket)
-        if row.length != requested_length:
+        if not isinstance(row.bracket, Bracket):
+            raise ContractError('Decode prediction requires an interpolation bracket')
+        # Use canonical copies for selection and traces, not the foreign source.
+        bracket = Bracket(row.bracket.lower, row.bracket.upper, row.bracket.weight)
+        prediction = DecodePrediction(row.length, row.group, row.frequency_mhz, row.tpot_s,
+                                      row.energy_j_per_token, bracket)
+        if prediction.length != requested_length:
             raise ContractError('Decode LUT rows must match requested L')
-    if {(row.group, row.frequency_mhz) for row in predictions} != expected:
+        normalized.append(prediction)
+    if {(row.group, row.frequency_mhz) for row in normalized} != expected:
         raise ContractError('Decode LUT must contain every original (G,f) exactly once')
-    return tuple(sorted(predictions, key=lambda row: (row.group, row.frequency_mhz)))
+    return tuple(sorted(normalized, key=lambda row: (row.group, row.frequency_mhz)))
 
 
 class DecodeController:

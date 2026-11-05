@@ -6,7 +6,7 @@ import pytest
 
 from kvolt_runtime.config import GROUPS
 from kvolt_runtime.errors import ContractError
-from kvolt_runtime.policy.knee import KneeAdapter
+from kvolt_runtime.policy.knee import KneeAdapter, validate_quality
 from kvolt_runtime.policy.types import Bracket, PolicyDependencyError, QualityPrediction
 
 
@@ -113,6 +113,34 @@ def test_corrupt_raw_quality_cannot_become_detector_recovery(score):
     object.__setattr__(rows[0], 'score', score)
     with pytest.raises(ContractError):
         adapter_for(set()).detect(rows)
+
+
+def test_foreign_quality_is_copied_to_canonical_binary64_before_detection():
+    rows = quality()
+    object.__setattr__(rows[0], 'score', 1)
+    object.__setattr__(rows[0].bracket, 'weight', 0)
+    normalized = validate_quality(rows)
+    assert normalized[0] is not rows[0]
+    assert normalized[0].bracket is not rows[0].bracket
+    assert normalized[0].score == 1.0 and type(normalized[0].score) is float
+    assert type(normalized[0].bracket.weight) is float
+    observed = []
+    def factory(**kwargs):
+        observed.append(kwargs['y'])
+        return SimpleNamespace(all_knees=[32])
+    assert KneeAdapter(factory).detect(rows).groups == (32,)
+    assert all(type(value) is float for value in observed[0])
+    assert type(rows[0].score) is int and type(rows[0].bracket.weight) is int
+
+
+@pytest.mark.parametrize('field,value', [('lower', 1024.0), ('upper', 8193), ('weight', False)])
+def test_corrupt_nested_quality_bracket_is_fatal_before_detection(field, value):
+    rows = quality()
+    object.__setattr__(rows[0].bracket, field, value)
+    def forbidden(**kwargs):
+        pytest.fail('invalid bracket must not reach detector')
+    with pytest.raises(ContractError):
+        KneeAdapter(forbidden).detect(rows)
 
 
 @pytest.mark.parametrize('package,version', [('kneed', '0.8.5'), ('scipy', '1.15.2')])

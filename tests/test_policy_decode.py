@@ -214,6 +214,61 @@ def test_single_binary64_step_beats_quality_tiebreak(fallback):
     assert pair(choose(repo)) == (128, 1122)
 
 
+@pytest.mark.parametrize('field,fallback', [('energy_j_per_token', False),
+                                         ('tpot_s', False), ('tpot_s', True)])
+def test_foreign_integer_metrics_use_canonical_binary64_ties_and_trace(field, fallback):
+    base = 2**53
+    repo = Repo(target=1 if fallback else 2**54)
+    repo.rows = tuple(replace(row, **{field: float(base + 2)}) for row in repo.rows)
+    repo.cell(8, 510, **{field: float(base)})
+    source = repo.rows[0]
+    object.__setattr__(source, field, base + 1)
+    object.__setattr__(source.bracket, 'weight', 0)
+    # The odd integer rounds to 2**53 in binary64, so 408 wins the final f tie.
+    result = choose(repo)
+    assert pair(result) == (8, 408)
+    assert result.selection_path == ('latency_fallback' if fallback else 'energy_min')
+    assert getattr(result.selected, field) == float(base)
+    assert type(getattr(result.selected, field)) is float
+    assert result.selected is not source and result.selected.bracket is not source.bracket
+    assert type(result.selected.bracket.weight) is float
+    assert all(type(getattr(c.prediction, field)) is float for c in result.candidates)
+    assert getattr(source, field) == base + 1 and type(getattr(source, field)) is int
+    assert type(source.bracket.weight) is int
+
+
+def test_canonical_quality_is_used_for_detector_selection_and_trace_without_source_mutation():
+    repo = Repo()
+    source = repo.qualities[0]
+    object.__setattr__(source, 'score', 1)
+    object.__setattr__(source.bracket, 'weight', 0)
+    class Inspect(Adapter):
+        def detect(self, rows):
+            assert rows[0] is not source and rows[0].bracket is not source.bracket
+            assert type(rows[0].score) is type(rows[0].bracket.weight) is float
+            return super().detect(rows)
+    result = choose(repo, Inspect())
+    assert pair(result) == (8, 408)
+    assert result.quality[0] is not source and result.quality[0].bracket is not source.bracket
+    assert type(result.selected_quality) is float
+    assert all(type(c.quality) is float for c in result.candidates)
+    assert type(source.score) is int and type(source.bracket.weight) is int
+
+
+@pytest.mark.parametrize('table', ['quality', 'decode'])
+@pytest.mark.parametrize('field,value', [('lower', 1024.0), ('upper', 8193), ('weight', False)])
+def test_corrupt_nested_bracket_is_fatal_before_phase_clock(table, field, value):
+    repo = Repo()
+    rows = repo.qualities if table == 'quality' else repo.rows
+    object.__setattr__(rows[0].bracket, field, value)
+    events = []
+    with pytest.raises(ContractError):
+        DecodeController(repo, Adapter(events=events), clock=lambda: pytest.fail('invalid bracket')).choose(
+            1024, 128, 123, 100)
+    assert repo.calls == (['quality'] if table == 'quality' else ['quality', 'decode'])
+    assert events == ([] if table == 'quality' else ['knee'])
+
+
 def test_budget_boundary_is_exact_and_input_order_does_not_change_choice():
     repo = Repo(target=1)
     repo.cell(16, 510, tpot_s=math.nextafter(1.0, 2), energy_j_per_token=0)

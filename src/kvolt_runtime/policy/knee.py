@@ -6,25 +6,30 @@ from typing import Callable
 
 from ..config import GROUPS
 from ..errors import ContractError
-from .types import KneeResult, PolicyDependencyError, QualityPrediction
+from .types import Bracket, KneeResult, PolicyDependencyError, QualityPrediction
 
 
 def validate_quality(quality, requested_length=None):
     """Require every original G and valid raw scores before detector execution."""
     if type(quality) is not tuple or len(quality) != len(GROUPS):
         raise ContractError('Quality LUT must return an immutable tuple of all five G')
+    normalized = []
     for row in quality:
         if not isinstance(row, QualityPrediction):
             raise ContractError('Quality LUT must return QualityPrediction rows')
-        # Validate even a corrupted/foreign repository's already-created object.
-        QualityPrediction(row.length, row.group, row.score, row.bracket)
-    if {row.group for row in quality} != set(GROUPS):
+        if not isinstance(row.bracket, Bracket):
+            raise ContractError('Quality prediction requires an interpolation bracket')
+        # Retain canonical binary64 copies, including nested bracket metadata.
+        # A foreign frozen dataclass may have been altered through object.__setattr__.
+        bracket = Bracket(row.bracket.lower, row.bracket.upper, row.bracket.weight)
+        normalized.append(QualityPrediction(row.length, row.group, row.score, bracket))
+    if {row.group for row in normalized} != set(GROUPS):
         raise ContractError('Quality LUT must contain each original G exactly once')
-    if len({row.length for row in quality}) != 1:
+    if len({row.length for row in normalized}) != 1:
         raise ContractError('Quality LUT rows must have the same L')
-    if requested_length is not None and quality[0].length != requested_length:
+    if requested_length is not None and normalized[0].length != requested_length:
         raise ContractError('Quality LUT rows must match requested L')
-    return tuple(sorted(quality, key=lambda row: row.group))
+    return tuple(sorted(normalized, key=lambda row: row.group))
 
 
 class KneeAdapter:

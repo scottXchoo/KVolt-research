@@ -48,6 +48,13 @@ remain before td and therefore in elapsed time. Full support preflight belongs
 to Runner; it must not move online interpolation/detection before the first token.
 DC validates the actual five Quality and 40 Decode rows and positive target, even
 with an injected repository. It does not filter away missing or invalid rows.
+Validation constructs fresh `Bracket` and prediction objects, then uses those
+canonical copies for detection, comparisons and returned traces. It revalidates
+nested bracket endpoints and weight, normalizes accepted numeric metrics to
+binary64, and leaves foreign source objects unchanged. Thus a foreign integer
+`2**53+1` compares as its binary64 value `float(2**53)`, preserving the exact-tie
+rules. Invalid bracket metadata remains fatal before detector/clock access at
+the affected lookup boundary; it is never a detector recovery.
 
 Detected Knees restrict the initial active G set; `not_found` and
 `error_recovered` use all five G. Eligible combinations satisfy the active G
