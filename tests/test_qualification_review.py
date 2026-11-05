@@ -202,6 +202,39 @@ def test_existing_output_is_preserved_without_gpu_imports(tmp_path):
     assert not (tmp_path / 'unused.lock').exists()
 
 
+@pytest.mark.parametrize('existing', [True, False])
+def test_hardware_lock_preserves_readonly_inode_and_excludes_other_process(tmp_path, existing):
+    import importlib.util
+    root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location('readonly_lock_tool', root / 'tools/qualify_backend.py')
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    path = tmp_path / 'hardware.lock'
+    if existing:
+        path.write_bytes(b'existing shared lock record')
+        path.chmod(0o444)
+        before = path.stat()
+    script = """
+import fcntl, sys
+with open(sys.argv[1], 'rb') as stream:
+    try:
+        fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        sys.exit(3)
+"""
+    with tool.hardware_lock(path):
+        inode = path.stat().st_ino
+        child = subprocess.run([sys.executable, '-c', script, str(path)], capture_output=True, timeout=15)
+        assert child.returncode == 3, child.stderr
+        if existing:
+            assert inode == before.st_ino
+            assert path.stat().st_mode == before.st_mode
+            assert path.read_bytes() == b'existing shared lock record'
+    assert path.stat().st_ino == inode
+    child = subprocess.run([sys.executable, '-c', script, str(path)], capture_output=True, timeout=15)
+    assert child.returncode == 0, child.stderr
+
+
 def test_attention_fixture_converts_parameters_without_touching_rotary_buffers():
     import importlib.util
     root=Path(__file__).resolve().parents[1]

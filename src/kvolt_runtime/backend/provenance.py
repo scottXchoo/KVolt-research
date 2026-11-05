@@ -6,6 +6,7 @@ import importlib.metadata
 import os
 from pathlib import Path
 import sys
+from types import MappingProxyType
 
 from ..errors import QualificationError
 
@@ -26,6 +27,15 @@ BINARY_HASHES = {
     'kivi-gemv': ('kivi_gemv', 'e6349ddbef539cead78d9600db7a19c7a107fb12eb05dcd5085096ef034a320b'),
     'flash-attn': ('flash_attn_2_cuda', 'd0c8ed4c5e3b933913dcdd368e52996b7116133fedbc4b7e43d072d4e2c958a6'),
 }
+# Device names select only a previously inspected build. They do not detect a
+# device, authorize arbitrary hashes, or change shared source/model/version pins.
+NATIVE_BUILD_PROFILES = MappingProxyType({
+    'agx1': MappingProxyType(dict(BINARY_HASHES)),
+    'agx2': MappingProxyType({
+        'kivi-gemv': ('kivi_gemv', '59a8cc13a82859612494d3fde0554edd2eee4cdcb7b9cdbb4f1a98297fb9e27a'),
+        'flash-attn': ('flash_attn_2_cuda', '10e5657f58c462cbc052b1798792e94aab498b47d039bad5ddc305be0a414c11'),
+    }),
+})
 MODEL_FILES = {
     'config.json': '29e4c210b0d6ac178b16b2a255a568bdb23b581e50ca1ef6a6d071dd85704e6e',
     'generation_config.json': '189fb0c0d7fd8a527db217c0a60a0e013f0394cd8800f9697a666a9e75e5f7fd',
@@ -59,8 +69,15 @@ def checked_file(path, expected):
     return {'path': str(path), 'sha256': expected}
 
 
-def validate_sources(kivi_root, snapshot):
+def native_build_hashes(native_profile='agx1'):
+    if not isinstance(native_profile, str) or native_profile not in NATIVE_BUILD_PROFILES:
+        raise QualificationError(f'unknown native build profile: {native_profile!r}')
+    return NATIVE_BUILD_PROFILES[native_profile]
+
+
+def validate_sources(kivi_root, snapshot, *, native_profile='agx1'):
     """Reject changed files/dependencies before torch import or model loading."""
+    binary_hashes = native_build_hashes(native_profile)
     root, snapshot = Path(kivi_root).resolve(), Path(snapshot).resolve()
     vendor = Path(__file__).with_name('vendor')
     sources = {'vendor_model': checked_file(vendor / 'llama_kivi.py', MODEL_SHA256)}
@@ -78,7 +95,7 @@ def validate_sources(kivi_root, snapshot):
             raise QualificationError(f'{package}: expected {expected}, got {actual}')
         versions[package] = actual
     binaries = {}
-    for package, (module, expected) in BINARY_HASHES.items():
+    for package, (module, expected) in binary_hashes.items():
         distribution = importlib.metadata.distribution(package)
         files = [distribution.locate_file(p) for p in distribution.files or []
                  if Path(p).name.startswith(module + '.') and str(p).endswith('.so')]
@@ -86,7 +103,8 @@ def validate_sources(kivi_root, snapshot):
             raise QualificationError(f'cannot uniquely locate pinned native module: {module}')
         binaries[module] = checked_file(files[0], expected)
     model_files = {name: checked_file(snapshot / name, sha) for name, sha in MODEL_FILES.items()}
-    return {'baseline_commit': BASELINE_COMMIT, 'kivi_upstream_commit': KIVI_COMMIT,
+    return {'native_profile': native_profile,
+            'baseline_commit': BASELINE_COMMIT, 'kivi_upstream_commit': KIVI_COMMIT,
             'sources': sources, 'versions': versions, 'binaries': binaries,
             'model_files': model_files, 'snapshot': str(snapshot),
             'execution_environment': execution_environment()}

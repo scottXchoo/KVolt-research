@@ -10,16 +10,17 @@ import pytest
 @pytest.fixture(scope='module')
 def gpu_context():
     if os.environ.get('KVOLT_RUN_GPU') != '1':
-        pytest.skip('set KVOLT_RUN_GPU=1 on coordinated AGX1 to run GPU correctness checks')
+        pytest.skip('set KVOLT_RUN_GPU=1 on a coordinated pinned AGX to run GPU correctness checks')
     root=Path(__file__).resolve().parents[2]
     sys.path.insert(0,str(root/'tools'))
     from qualify_backend import hardware_lock
     from kvolt_runtime.backend.provenance import validate_sources,import_pinned_source,checked_file
     baseline=Path(os.environ.get('KVOLT_BASELINE','/home/agx3/kvolt'))
-    kivi=baseline/'third_party/KIVI'
+    kivi=Path(os.environ.get('KVOLT_KIVI_ROOT',str(baseline/'third_party/KIVI')))
+    native_profile=os.environ.get('KVOLT_NATIVE_PROFILE','agx1')
     snapshot=Path(os.environ.get('KVOLT_SNAPSHOT',str(baseline/'.cache/huggingface/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659')))
     with hardware_lock(Path(os.environ.get('KVOLT_HARDWARE_LOCK','/run/lock/kvolt-p3-hardware.lock'))):
-        provenance=validate_sources(kivi,snapshot)
+        provenance=validate_sources(kivi,snapshot,native_profile=native_profile)
         checked_file(baseline/'scripts/k2_decode_lut/backend.py','2702735c01b64bd84f146a8b042b96960aa7540ada52b98208caf7421295c859')
         checked_file(baseline/'scripts/p6/cache.py','f0de50eae45cf204f63dd29837ba5b7dd33f2b21b0dc9544473e4c8c5258f24f')
         sys.path.insert(0,str(kivi)); sys.path.insert(0,str(baseline))

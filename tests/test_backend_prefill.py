@@ -160,7 +160,8 @@ def test_failed_prefill_does_not_publish_cache_and_allows_fresh_request(failure)
     b.release_request(token.cache)
 
 
-def test_load_model_one_instance_preserves_parameters_buffers_and_override(monkeypatch):
+@pytest.mark.parametrize('native_profile', ['agx1', 'agx2'])
+def test_load_model_one_instance_preserves_parameters_buffers_and_override(monkeypatch, native_profile):
     import sys
     from kvolt_runtime.backend import provenance
     class Storage(Tensor):
@@ -185,13 +186,17 @@ def test_load_model_one_instance_preserves_parameters_buffers_and_override(monke
         rope_scaling={'rope_type': 'llama3'}, max_position_embeddings=131072)
     source = SimpleNamespace(LlamaForCausalLM_KIVI=Resident, LlamaFlashAttention_KIVI=Base,
                              apply_rotary_pos_emb=lambda *args: args)
-    monkeypatch.setattr(provenance, 'validate_sources', lambda *args: {})
+    profiles = []
+    def validate(*args, native_profile='agx1'):
+        profiles.append(native_profile)
+        return {'native_profile': native_profile}
+    monkeypatch.setattr(provenance, 'validate_sources', validate)
     monkeypatch.setattr(provenance, 'import_pinned_source', lambda *args: source)
     monkeypatch.setitem(sys.modules, 'torch', Torch())
     monkeypatch.setitem(sys.modules, 'transformers', SimpleNamespace(
         LlamaConfig=SimpleNamespace(from_pretrained=lambda *args, **kwargs: settings),
         AutoTokenizer=SimpleNamespace(from_pretrained=lambda *args, **kwargs: SimpleNamespace(eos_token_id=128009))))
-    result = load_model(Path(RuntimeConfig().snapshot), RuntimeConfig())
+    result = load_model(Path(RuntimeConfig().snapshot), RuntimeConfig(), native_profile=native_profile)
     assert len(Resident.calls) == 1
     assert Resident.calls[0][1]['torch_dtype'] == 'torch.float16'
     assert Resident.calls[0][1]['local_files_only'] is True
@@ -200,8 +205,11 @@ def test_load_model_one_instance_preserves_parameters_buffers_and_override(monke
     assert result.model.generation_config.do_sample is False
     assert settings.group_size is None
     assert all(type(layer.self_attn) is not Base for layer in result.model.model.layers)
-    reference = load_model(Path(RuntimeConfig().snapshot), RuntimeConfig(), raw_prefill=False)
+    reference = load_model(Path(RuntimeConfig().snapshot), RuntimeConfig(), raw_prefill=False,
+                           native_profile=native_profile)
     assert all(type(layer.self_attn) is Base for layer in reference.model.model.layers)
+    assert profiles == [native_profile, native_profile]
+    assert reference.provenance['native_profile'] == result.provenance['native_profile'] == native_profile
 
 
 def test_source_gate_rejects_changed_file_before_gpu_import(tmp_path):

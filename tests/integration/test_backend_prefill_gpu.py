@@ -16,9 +16,8 @@ import pytest
 
 
 pytestmark = [pytest.mark.gpu, pytest.mark.skipif(
-    os.environ.get('KVOLT_RUN_B1_GPU') != '1', reason='set KVOLT_RUN_B1_GPU=1 on locked AGX1')]
+    os.environ.get('KVOLT_RUN_B1_GPU') != '1', reason='set KVOLT_RUN_B1_GPU=1 on a coordinated pinned AGX')]
 COHORT_SHA256 = 'e9f0c05e0d21e13356f6a64d1176b03bcff613c708b0b0fd72228f711aadc20d'
-DEFAULT_SNAPSHOT = '/home/agx3/kvolt/.cache/huggingface/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659'
 
 
 def _cohort():
@@ -45,25 +44,30 @@ def test_b1_raw_prefill_matches_native_first_token_and_reuses_one_model(monkeypa
     from kvolt_runtime.contracts import CacheFormat
 
     requests = _cohort()  # validate all input bytes/IDs before GPU work
+    baseline = Path(os.environ.get('KVOLT_BASELINE', '/home/agx3/kvolt'))
+    kivi_root = Path(os.environ.get('KVOLT_KIVI_ROOT', str(baseline / 'third_party/KIVI')))
+    native_profile = os.environ.get('KVOLT_NATIVE_PROFILE', 'agx1')
     report_path = Path(os.environ.get('KVOLT_B1_REPORT', 'artifacts/m1/b1/prefill-report.json'))
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report = {'schema': 'kvolt-b1-prefill-v1', 'cohort_sha256': COHORT_SHA256,
               'git_sha': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
               'python': sys.version, 'execution_environment': execution_environment(),
+              'native_profile': native_profile,
               'status': 'running', 'requests': []}
     # Existing project lock; fail immediately if another experiment owns it.
-    with Path('/run/lock/kvolt-p3-hardware.lock').open('rb') as lock:
+    with Path(os.environ.get('KVOLT_HARDWARE_LOCK', '/run/lock/kvolt-p3-hardware.lock')).open('rb') as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            pytest.fail('AGX1 hardware lock busy; no model or GPU import attempted')
+            pytest.fail('GPU hardware lock busy; no model or GPU import attempted')
         try:
-            snapshot = Path(os.environ.get('KVOLT_MODEL_SNAPSHOT', DEFAULT_SNAPSHOT))
+            default_snapshot = baseline / '.cache/huggingface/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots' / RuntimeConfig().snapshot
+            snapshot = Path(os.environ.get('KVOLT_MODEL_SNAPSHOT', os.environ.get('KVOLT_SNAPSHOT', str(default_snapshot))))
             loads = []
             def loader(path, config):
                 loads.append(str(path))
-                return load_model(path, config)
-            backend = InferenceBackend(loader=loader)
+                return load_model(path, config, kivi_root=kivi_root, native_profile=native_profile)
+            backend = InferenceBackend(loader=loader, native_profile=native_profile)
             backend.load_session(snapshot, RuntimeConfig())
             torch = backend.torch
             source = sys.modules[backend.model.__class__.__module__]
@@ -120,7 +124,8 @@ def test_b1_raw_prefill_matches_native_first_token_and_reuses_one_model(monkeypa
             gc.collect()
             assert candidate_ref() is None, 'candidate model still resident before reference load'
             torch.cuda.empty_cache()
-            reference = load_model(snapshot, RuntimeConfig(), raw_prefill=False)
+            reference = load_model(snapshot, RuntimeConfig(), raw_prefill=False,
+                                   kivi_root=kivi_root, native_profile=native_profile)
             report['reference_provenance'] = reference.provenance
             reference.model.config.group_size = 32
             for layer in reference.model.model.layers:

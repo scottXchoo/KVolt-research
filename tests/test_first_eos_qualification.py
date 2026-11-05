@@ -17,7 +17,7 @@ q = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(q)
 
 
-def frozen(tmp_path, monkeypatch):
+def frozen(tmp_path, monkeypatch, native_profile='agx1'):
     snapshot = tmp_path / q.SNAPSHOT
     snapshot.mkdir()
     for name in q.TOKENIZER_HASHES:
@@ -27,7 +27,71 @@ def frozen(tmp_path, monkeypatch):
     tokenizer = SimpleNamespace(encode=lambda text, add_special_tokens: SimpleNamespace(
         ids=[128000] + [ord(c) for c in text[17:]]))
     monkeypatch.setattr(q, 'load_tokenizer', lambda _: (tokenizer, 'test-tokenizers'))
-    return q.prepare(snapshot, tmp_path / 'frozen')
+    return q.prepare(snapshot, tmp_path / 'frozen', native_profile=native_profile)
+
+
+@pytest.mark.parametrize('profile', ['agx1', 'agx2'])
+def test_frozen_profile_is_bound_to_policy_plan_and_run_before_gpu(tmp_path, monkeypatch, profile):
+    original = copy.deepcopy(q.POLICY)
+    inputs = frozen(tmp_path, monkeypatch, profile)
+    data, plan = q.load_frozen(inputs, q.sha256(inputs), tmp_path / q.SNAPSHOT, native_profile=profile)
+    assert data['policy']['native_profile'] == data['provenance']['native_profile'] == profile
+    assert plan['policy']['native_profile'] == profile
+    assert q.POLICY == original
+    other = 'agx2' if profile == 'agx1' else 'agx1'
+    with pytest.raises(RuntimeError, match='policy|profile'):
+        q.load_frozen(inputs, q.sha256(inputs), tmp_path / q.SNAPSHOT, native_profile=other)
+    output = tmp_path / 'mismatched-run'
+    assert q.main(['--snapshot', str(tmp_path / q.SNAPSHOT), '--inputs', str(inputs),
+                   '--expected-input-sha256', q.sha256(inputs), '--output', str(output),
+                   '--native-profile', other, '--lock', str(tmp_path / 'unused.lock')]) == 1
+    assert not (tmp_path / 'unused.lock').exists()
+    assert not (inputs.parent / 'run-attempt.json').exists()
+
+
+def test_first_eos_run_uses_same_profile_for_both_model_paths(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    from kvolt_runtime.backend import model
+    from kvolt_runtime.qualification import reference
+    inputs = frozen(tmp_path, monkeypatch, 'agx2')
+    data, plan = q.load_frozen(inputs, q.sha256(inputs), tmp_path / q.SNAPSHOT, native_profile='agx2')
+    output = tmp_path / 'run'
+    output.mkdir()
+    args = SimpleNamespace(inputs=inputs, output=output, snapshot=tmp_path / q.SNAPSHOT,
+                           lock=tmp_path / 'lock', kivi_root=tmp_path / 'kivi', native_profile='agx2')
+    monkeypatch.setattr(q, 'hardware_lock', lambda path: nullcontext())
+    monkeypatch.setattr(q, 'device_report', lambda torch: {})
+    monkeypatch.setattr(q, 'verify_loaded_tokenizer', lambda *args: {})
+    monkeypatch.setattr(reference, 'generate_reference', lambda *args: GenerationRecord((128009,), 'eos', 0, 2))
+    calls = []
+    torch = SimpleNamespace(cuda=SimpleNamespace(empty_cache=lambda: None, synchronize=lambda: None))
+    def load(path, config, **kwargs):
+        calls.append(('reference', kwargs))
+        return model.LoadedModel(object(), torch, object(), {})
+    class CandidateReached(Exception): pass
+    def candidate(**kwargs):
+        calls.append(('candidate', kwargs))
+        raise CandidateReached
+    monkeypatch.setattr(model, 'load_model', load)
+    monkeypatch.setattr(model, 'InferenceBackend', candidate)
+    with pytest.raises(CandidateReached):
+        q.run(args, data, plan)
+    assert [kind for kind, kwargs in calls] == ['reference', 'candidate']
+    assert all(kwargs['native_profile'] == 'agx2' for kind, kwargs in calls)
+
+
+def test_direct_run_rejects_cross_profile_plan_before_attempt_or_lock(tmp_path, monkeypatch):
+    inputs = frozen(tmp_path, monkeypatch, 'agx2')
+    data, plan = q.load_frozen(inputs, q.sha256(inputs), tmp_path / q.SNAPSHOT, native_profile='agx2')
+    plan = copy.deepcopy(plan)
+    plan['policy']['native_profile'] = 'agx1'
+    def forbidden(*args):
+        raise AssertionError('mismatched plan reached reservation/lock')
+    monkeypatch.setattr(q, 'reserve_attempt', forbidden)
+    monkeypatch.setattr(q, 'hardware_lock', forbidden)
+    args = SimpleNamespace(snapshot=tmp_path / q.SNAPSHOT, native_profile='agx2')
+    with pytest.raises(RuntimeError, match='plan native build profile'):
+        q.run(args, data, plan)
 
 
 def test_exact_eight_fixed_raw_dialogues_no_trailing_eot():

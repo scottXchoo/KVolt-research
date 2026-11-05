@@ -29,7 +29,8 @@ def model_identity(model):
                              for name, t in model.named_buffers())}
 
 
-def load_model(snapshot_path, config, *, kivi_root=DEFAULT_KIVI_ROOT, raw_prefill=True):
+def load_model(snapshot_path, config, *, kivi_root=DEFAULT_KIVI_ROOT, raw_prefill=True,
+               native_profile='agx1'):
     """The reference passes raw_prefill=False and gets the unchanged source class.
 
     Both modes construct exactly one LlamaForCausalLM_KIVI. No HF model, meta
@@ -39,7 +40,7 @@ def load_model(snapshot_path, config, *, kivi_root=DEFAULT_KIVI_ROOT, raw_prefil
     snapshot = Path(snapshot_path).resolve()
     if snapshot.name != config.snapshot:
         raise QualificationError('model directory must name the fixed snapshot revision')
-    provenance = validate_sources(kivi_root, snapshot)
+    provenance = validate_sources(kivi_root, snapshot, native_profile=native_profile)
     # All hash/version validation above is stdlib-only and precedes GPU imports.
     import torch
     from transformers import AutoTokenizer, LlamaConfig
@@ -86,8 +87,12 @@ def load_model(snapshot_path, config, *, kivi_root=DEFAULT_KIVI_ROOT, raw_prefil
 
 
 class InferenceBackend:
-    def __init__(self, *, loader=None, kivi_root=DEFAULT_KIVI_ROOT, clock=time.monotonic_ns):
-        self._loader = loader or (lambda path, config: load_model(path, config, kivi_root=kivi_root))
+    def __init__(self, *, loader=None, kivi_root=DEFAULT_KIVI_ROOT, clock=time.monotonic_ns,
+                 native_profile='agx1'):
+        from .provenance import native_build_hashes
+        native_build_hashes(native_profile)
+        self._loader = loader or (lambda path, config: load_model(
+            path, config, kivi_root=kivi_root, native_profile=native_profile))
         self._clock, self._loaded, self._active_cache = clock, None, None
 
     @property

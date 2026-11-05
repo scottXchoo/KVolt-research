@@ -30,9 +30,9 @@ python3 -m compileall -q src tools tests
 ```
 
 The CPU suite uses injected cache/model fixtures, including first EOS and
-Nmax=1. A skipped GPU test is not GPU qualification. The GPU first-EOS natural
-input policy is pending; the current frozen RULER cohort does not establish
-that branch on the device.
+Nmax=1. A skipped GPU test is not GPU qualification. Natural first-EOS coverage
+requires the separately frozen follow-up below; the current frozen RULER cohort
+does not establish that branch on the device.
 
 ## AGX1 commands
 
@@ -75,6 +75,84 @@ These diagnostic repeats are extra GPU work and are not independent quality
 samples. Caps of 512 have natural EOS enabled, so
 actual output count and elapsed GPU work depend on the model. No runtime or
 energy estimate is presented as measured performance.
+
+## Explicit AGX2 native build
+
+`load_model` and `InferenceBackend` accept the keyword `native_profile='agx1'`.
+Both qualification tools accept `--native-profile {agx1,agx2}` and default to
+`agx1`. The selected profile is passed to both native reference and candidate
+and recorded in their provenance and the qualification plan. Production code
+does not select a profile from environment variables or device/path detection.
+An injected backend loader retains its existing `(path, config)` signature;
+the caller supplying that loader owns its loading arguments.
+
+These are an immutable whitelist of previously inspected builds. AGX1's
+existing binary pins remain unchanged. AGX2 changes only these native hashes:
+
+| Native module | AGX2 SHA256 |
+| --- | --- |
+| `kivi_gemv` | `59a8cc13a82859612494d3fde0554edd2eee4cdcb7b9cdbb4f1a98297fb9e27a` |
+| `flash_attn_2_cuda` | `10e5657f58c462cbc052b1798792e94aab498b47d039bad5ddc305be0a414c11` |
+
+Source, model/tokenizer, and dependency pins are identical for both profiles.
+Provenance `baseline_commit` identifies the original pinned source baseline;
+it does not assert that AGX2's legacy checkout has that Git HEAD. Actual source
+bytes, native builds, model files, import origins, and Runtime revision are
+recorded and checked separately.
+Unknown profiles and wrong native hashes fail before torch import/model load.
+There is no hash override, automatic acceptance, or check-skipping flag.
+Imported module origins and binary bytes are rechecked against the selected
+profile. Selecting AGX2 is not evidence that its GPU qualification has passed.
+
+Only GPU test entry points read `KVOLT_NATIVE_PROFILE` (default `agx1`),
+`KVOLT_BASELINE`, and `KVOLT_KIVI_ROOT` (default `$KVOLT_BASELINE/third_party/KIVI`).
+The cache tests still require the exact pinned baseline helper sources. On
+AGX2 the coordinator supplies a frozen Python-only reference source snapshot
+because its legacy checkout lacks `scripts/k2_decode_lut/backend.py`.
+`KVOLT_SNAPSHOT` supplies the model snapshot; B1 also preserves its existing
+`KVOLT_MODEL_SNAPSHOT` override. Tools require explicit CLI arguments.
+
+```sh
+cd /home/agx31/kvolt-runtime
+export PYTHONPATH=/home/agx31/kvolt-runtime/src:/home/agx31/kvolt-runtime-test-deps
+export LD_LIBRARY_PATH=/mnt/kvolt-data/kvolt/.local/cusparselt/lib:/usr/local/cuda/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+export KVOLT_NATIVE_PROFILE=agx2
+export KVOLT_BASELINE=/home/agx31/kvolt-m1-reference
+export KVOLT_KIVI_ROOT=/mnt/kvolt-data/kvolt/third_party/KIVI
+export KVOLT_SNAPSHOT=/mnt/kvolt-data/kvolt/.cache/huggingface/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659
+/mnt/kvolt-data/kvolt/.venv/bin/python -m pytest -q
+KVOLT_RUN_GPU=1 /mnt/kvolt-data/kvolt/.venv/bin/python -m pytest -q tests/integration/test_cache_equivalence_gpu.py
+KVOLT_RUN_B1_GPU=1 /mnt/kvolt-data/kvolt/.venv/bin/python -m pytest -q tests/integration/test_backend_prefill_gpu.py
+/mnt/kvolt-data/kvolt/.venv/bin/python tools/qualify_backend.py --suite smoke \
+  --native-profile agx2 --kivi-root "$KVOLT_KIVI_ROOT" \
+  --snapshot "$KVOLT_SNAPSHOT" --output artifacts/m1/agx2-b2-smoke
+/mnt/kvolt-data/kvolt/.venv/bin/python tools/qualify_first_eos.py --prepare-only \
+  --native-profile agx2 --snapshot "$KVOLT_SNAPSHOT" --output artifacts/m1/agx2-first-eos-frozen
+# Retain preparation's exact SHA256 before inference:
+/mnt/kvolt-data/kvolt/.venv/bin/python tools/qualify_first_eos.py \
+  --native-profile agx2 --kivi-root "$KVOLT_KIVI_ROOT" --snapshot "$KVOLT_SNAPSHOT" \
+  --inputs artifacts/m1/agx2-first-eos-frozen/inputs.json \
+  --expected-input-sha256 <CPU_PREPARATION_SHA256> --output artifacts/m1/agx2-first-eos-run
+```
+
+First-EOS preparation freezes `native_profile` in the policy and provenance;
+the plan includes both. Run must select the same profile, and a mismatch fails
+before reserving an attempt or loading a model. The shared `POLICY` constant is
+not changed during selection. Prepare a new explicit AGX2 freeze after the
+final clean commit, retaining the same eight approved prompts. Existing AGX1
+frozen evidence remains separate and is not rewritten to select AGX2.
+
+The common hardware lock reuses its existing inode via a read-only descriptor
+and takes the same exclusive nonblocking flock. If absent, creation is
+exclusive; a concurrent creator's inode is reopened. No lock file is removed,
+replaced, chmodded, or bypassed. Do not wrap any command in another flock.
+AGX1's busy root-owned lock remains untouched.
+
+Record source/helper archive hashes, device and selected native build with
+each result. AGX1's existing 210 exact pairs remain AGX1 evidence. AGX2's
+target CPU, cache/GQA, B1, smoke, and eight-input first-EOS results are separate;
+do not claim a full 150-pair or 45-boundary AGX2 rerun unless actually executed.
+AGX2 results do not qualify AGX1 natural first EOS or the full adaptive Runtime.
 
 ## Evidence and storage
 

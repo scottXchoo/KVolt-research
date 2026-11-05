@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'src'))
 sys.path.insert(0, str(ROOT / 'tools'))
 from kvolt_runtime.config import EOS_TOKEN_IDS, GROUPS, SNAPSHOT, RuntimeConfig
+from kvolt_runtime.backend.provenance import NATIVE_BUILD_PROFILES, native_build_hashes
 from kvolt_runtime.contracts import CacheFormat, RequestSpec, token_ids_sha256
 from kvolt_runtime.qualification.compare import compare_generation
 from qualify_backend import device_report, hardware_lock, write_json
@@ -109,23 +110,33 @@ def require_empty(path):
         raise RuntimeError('output must be empty; no resume, new attempt, or automatic retry')
 
 
-def prepare(snapshot, output):
+def diagnostic_policy(native_profile='agx1'):
+    native_build_hashes(native_profile)
+    return dict(POLICY, native_profile=native_profile)
+
+
+def prepare(snapshot, output, *, native_profile='agx1'):
     require_empty(output)
+    policy = diagnostic_policy(native_profile)
     identity = tokenizer_identity(snapshot)
     tokenizer, version = load_tokenizer(snapshot)
     rows = encode_prompts(tokenizer)
-    data = {'schema': 'kvolt.m1.first-eos.inputs.v1', 'policy': POLICY,
-            'provenance': {'runtime': runtime_identity(), 'tokenizer': dict(identity, tokenizers_version=version)},
+    data = {'schema': 'kvolt.m1.first-eos.inputs.v1', 'policy': policy,
+            'provenance': {'native_profile': native_profile, 'runtime': runtime_identity(),
+                           'tokenizer': dict(identity, tokenizers_version=version)},
             'items': rows}
     Path(output).mkdir(parents=True, exist_ok=True)
     inputs = Path(output) / 'inputs.json'
     write_json(inputs, data)
     write_json(Path(output) / 'plan.json', make_plan(data, sha256(inputs)))
-    assert_frozen_identity(data, snapshot)
+    assert_frozen_identity(data, snapshot, native_profile=native_profile)
     return inputs
 
 
-def assert_frozen_identity(data, snapshot):
+def assert_frozen_identity(data, snapshot, *, native_profile='agx1'):
+    if (data.get('policy') != diagnostic_policy(native_profile)
+            or data.get('provenance', {}).get('native_profile') != native_profile):
+        raise RuntimeError('frozen native build profile/policy mismatch')
     if data['provenance']['runtime'] != runtime_identity():
         raise RuntimeError('runtime root/commit/status/source changed since CPU freeze')
     expected = data['provenance']['tokenizer']
@@ -134,11 +145,11 @@ def assert_frozen_identity(data, snapshot):
         raise RuntimeError('tokenizer snapshot changed since CPU freeze')
 
 
-def load_frozen(inputs, expected_sha, snapshot):
+def load_frozen(inputs, expected_sha, snapshot, *, native_profile='agx1'):
     if len(expected_sha) != 64 or sha256(inputs) != expected_sha:
         raise RuntimeError('frozen inputs SHA256 mismatch')
     data = json.loads(Path(inputs).read_text(encoding='utf-8'))
-    if data.get('schema') != 'kvolt.m1.first-eos.inputs.v1' or data.get('policy') != POLICY:
+    if data.get('schema') != 'kvolt.m1.first-eos.inputs.v1' or data.get('policy') != diagnostic_policy(native_profile):
         raise RuntimeError('frozen diagnostic policy mismatch')
     rows = data.get('items', [])
     if len(rows) != 8 or [row['prompt'] for row in rows] != list(PROMPTS):
@@ -152,7 +163,7 @@ def load_frozen(inputs, expected_sha, snapshot):
             raise RuntimeError('frozen prompt/token ID/length/hash mismatch')
     if len({tuple(row['input_ids']) for row in rows}) != 8:
         raise RuntimeError('frozen token sequences must be distinct')
-    assert_frozen_identity(data, snapshot)
+    assert_frozen_identity(data, snapshot, native_profile=native_profile)
     # Re-encoding is CPU-only and proves IDs correspond to the pinned tokenizer.
     tokenizer, version = load_tokenizer(snapshot)
     if rows != encode_prompts(tokenizer) or data['provenance']['tokenizer']['tokenizers_version'] != version:
@@ -268,6 +279,9 @@ def summarize(results):
 
 
 def run(args, data, plan):
+    assert_frozen_identity(data, args.snapshot, native_profile=args.native_profile)
+    if plan.get('policy') != diagnostic_policy(args.native_profile):
+        raise RuntimeError('frozen plan native build profile/policy mismatch')
     from kvolt_runtime.qualification.reference import generate_reference, generate_candidate
     cases = [(c, RequestSpec(c['request_id'], tuple(data['items'][i // 5]['input_ids']), c['prompt_sha256'], 2))
              for i, c in enumerate(plan['cases'])]
@@ -276,7 +290,7 @@ def run(args, data, plan):
     def guard():
         if sha256(args.inputs) != inputs_sha or sha256(args.inputs.with_name('plan.json')) != plan_sha:
             raise RuntimeError('frozen input/plan changed during qualification')
-        assert_frozen_identity(data, args.snapshot)
+        assert_frozen_identity(data, args.snapshot, native_profile=args.native_profile)
 
     reserve_attempt(args.inputs.parent, args.output)
     with hardware_lock(args.lock):
@@ -289,7 +303,8 @@ def run(args, data, plan):
         torch = None
         try:
             guard()
-            loaded = load_model(args.snapshot, RuntimeConfig(), kivi_root=args.kivi_root, raw_prefill=False)
+            loaded = load_model(args.snapshot, RuntimeConfig(), kivi_root=args.kivi_root, raw_prefill=False,
+                                native_profile=args.native_profile)
             torch = loaded.torch
             write_json(args.output / 'native-provenance.json', loaded.provenance)
             write_json(args.output / 'device.json', device_report(torch))
@@ -318,7 +333,7 @@ def run(args, data, plan):
         backend = None
         try:
             guard()
-            backend = InferenceBackend(kivi_root=args.kivi_root)
+            backend = InferenceBackend(kivi_root=args.kivi_root, native_profile=args.native_profile)
             backend.load_session(args.snapshot, RuntimeConfig())
             write_json(args.output / 'candidate-provenance.json', backend.provenance)
             write_json(args.output / 'candidate-tokenizer-agreement.json', verify_loaded_tokenizer(backend.tokenizer, data))
@@ -365,6 +380,7 @@ def main(argv=None):
     parser.add_argument('--inputs', type=Path)
     parser.add_argument('--expected-input-sha256')
     parser.add_argument('--kivi-root', type=Path, default=Path('/home/agx3/kvolt/third_party/KIVI'))
+    parser.add_argument('--native-profile', choices=tuple(NATIVE_BUILD_PROFILES), default='agx1')
     parser.add_argument('--lock', type=Path, default=Path('/run/lock/kvolt-p3-hardware.lock'))
     args = parser.parse_args(argv)
     require_empty(args.output)
@@ -376,10 +392,11 @@ def main(argv=None):
     plan = None
     try:
         if args.prepare_only:
-            inputs = prepare(args.snapshot, args.output)
+            inputs = prepare(args.snapshot, args.output, native_profile=args.native_profile)
             print(json.dumps({'inputs': str(inputs), 'inputs_sha256': sha256(inputs), 'GPU_or_model_loaded': False}))
             return 0
-        data, plan = load_frozen(args.inputs, args.expected_input_sha256, args.snapshot)
+        data, plan = load_frozen(args.inputs, args.expected_input_sha256, args.snapshot,
+                                 native_profile=args.native_profile)
         return run(args, data, plan)
     except Exception as error:
         not_run = {}

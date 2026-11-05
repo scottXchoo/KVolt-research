@@ -14,11 +14,21 @@ import sys
 import traceback
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
+from kvolt_runtime.backend.provenance import NATIVE_BUILD_PROFILES
 
 
 @contextmanager
 def hardware_lock(path):
-    with Path(path).open('a+') as lock:
+    # Linux flock supports LOCK_EX on a readable descriptor. Reuse the shared
+    # inode even when its root-owned permissions do not allow writing.
+    try:
+        lock = Path(path).open('rb')
+    except FileNotFoundError:
+        try:
+            lock = Path(path).open('x+b')
+        except FileExistsError:
+            lock = Path(path).open('rb')
+    with lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
@@ -51,6 +61,7 @@ def main(argv=None):
     parser.add_argument('--manifest',type=Path,default=Path('artifacts/m1/cohort/manifest.json'))
     parser.add_argument('--snapshot',type=Path,required=True)
     parser.add_argument('--kivi-root',type=Path,default=Path('/home/agx3/kvolt/third_party/KIVI'))
+    parser.add_argument('--native-profile',choices=tuple(NATIVE_BUILD_PROFILES),default='agx1')
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--cache-budget-mib',type=int,default=3072)
     parser.add_argument('--lock',type=Path,default=Path('/run/lock/kvolt-p3-hardware.lock'))
@@ -77,6 +88,7 @@ def main(argv=None):
     source_paths=sorted((root/'src').rglob('*.py'))+[Path(__file__).resolve()]
     sources={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in source_paths}
     plan={'schema':'kvolt.m1.qualification.v1','suite':args.suite,'cohort':cohort,
+          'native_profile':args.native_profile,
           'runtime_config':asdict(RuntimeConfig()),'source_sha256':sources,
           'runtime_commit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(),
           'runtime_status':subprocess.check_output(['git','status','--porcelain'],cwd=root,text=True),
@@ -102,7 +114,8 @@ def main(argv=None):
         for batch_index,chunk in enumerate(chunks):
             prefix=f'batch-{batch_index:03d}'
             assert_sources_unchanged()
-            loaded=load_model(args.snapshot,RuntimeConfig(),kivi_root=args.kivi_root,raw_prefill=False)
+            loaded=load_model(args.snapshot,RuntimeConfig(),kivi_root=args.kivi_root,raw_prefill=False,
+                              native_profile=args.native_profile)
             torch=loaded.torch
             write_json(args.output/(prefix+'.native-provenance.json'),loaded.provenance)
             write_json(args.output/'device.json',device_report(torch))
@@ -141,7 +154,7 @@ def main(argv=None):
                 gc.collect()
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
-            backend=InferenceBackend(kivi_root=args.kivi_root)
+            backend=InferenceBackend(kivi_root=args.kivi_root,native_profile=args.native_profile)
             try:
                 assert_sources_unchanged()
                 backend.load_session(args.snapshot,RuntimeConfig())
