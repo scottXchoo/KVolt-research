@@ -9,6 +9,12 @@ description = "KVolt experimental inference runtime"
 requires-python = ">=3.10"
 dependencies = []
 
+[project.optional-dependencies]
+policy = ["numpy==1.26.4", "scipy==1.15.3", "kneed==0.9.0"]
+
+[project.scripts]
+kvolt = "kvolt_runtime.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
