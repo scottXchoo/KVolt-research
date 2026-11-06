@@ -14,7 +14,7 @@ SCENARIOS = ('baseline', 'flat_quality', 'nonmonotonic', 'exact_ties')
 
 
 def _parser():
-    parser = argparse.ArgumentParser(prog='kvolt', description='KVolt CPU policy diagnostics')
+    parser = argparse.ArgumentParser(prog='kvolt', description='KVolt adaptive runtime and CPU policy diagnostics')
     commands = parser.add_subparsers(dest='command', required=True)
     diagnose = commands.add_parser('diagnose', help='predict policy choices using assumed CPU phase times')
     diagnose.add_argument('--length', type=int, required=True, help='assumed input token length, 1024..8192; no tokenizer')
@@ -26,6 +26,8 @@ def _parser():
     source.add_argument('--lut-bundle', type=Path, help='sealed measured LUT bundle; never falls back to Mock')
     source.add_argument('--mock', choices=SCENARIOS, help='explicit synthetic LUT scenario')
     diagnose.add_argument('--output', type=Path, help='also save the JSON to a new file; existing paths are refused')
+    from .run_cli import configure_parser
+    configure_parser(commands.add_parser('run', help='run sequential adaptive development requests'))
     return parser
 
 
@@ -201,6 +203,10 @@ def _error_report(result, stage, error):
 
 def main(argv=None):
     """Print exactly one JSON record after valid argument syntax; return 0 or 2."""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == 'run':
+        from .run_cli import main as run_main
+        return run_main(argv[1:])
     args = _parser().parse_args(argv)
     result = _base_report(args)
     stream = None

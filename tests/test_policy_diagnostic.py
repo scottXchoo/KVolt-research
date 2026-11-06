@@ -171,7 +171,12 @@ def test_missing_measured_bundle_is_not_mock(capsys,tmp_path):
 def test_syntax_is_argparse_exit_two(extra):
     p=run_cli(*extra)
     assert p.returncode==2 and 'usage:' in p.stderr
-    assert p.stdout==''
+    if extra == ['run']:
+        result=json.loads(p.stdout)
+        assert result['record_type']=='session_result' and result['exit_code']==2
+        assert result['session_path'] is None
+    else:
+        assert p.stdout==''
 
 
 def test_help_and_import_have_no_scientific_or_gpu_imports():
