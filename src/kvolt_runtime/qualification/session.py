@@ -28,6 +28,7 @@ class ExperimentPreparation:
         self.snapshot = None
         self.changes = []
         self.mutation_attempted = False
+        self.phase = None
 
     def _integer(self, path):
         value = self.io.read(path)
@@ -59,7 +60,7 @@ class ExperimentPreparation:
     def _write(self, path, value):
         self.lock.assert_held()
         self.mutation_attempted = True
-        row = {'path': str(path), 'value': str(value), 'succeeded': False}
+        row = {'path': str(path), 'value': str(value), 'phase': self.phase, 'succeeded': False}
         self.changes.append(row)
         self.io.write(path, value)
         row['succeeded'] = True
@@ -67,6 +68,7 @@ class ExperimentPreparation:
     def prepare(self):
         if self.snapshot is None:
             raise ValueError('capture preparation state before changing controls')
+        self.phase = 'prepare'
         p = self.profile
         # Same order as the existing P2 preparation, without configuration edits.
         for path, value in ((p.emc_lock_path, 1), (p.emc_halt_path, 1), (p.emc_rate_path, 3199000000)):
@@ -81,11 +83,13 @@ class ExperimentPreparation:
                 self._write(path / 'scaling_max_freq', 2201600)
             self._write(path / 'scaling_min_freq', 2201600)
             self._write(path / 'scaling_max_freq', 2201600)
-        return {'changes': self.changes, 'purpose': 'external_experiment_preparation_not_runtime'}
+        return {'changes': [dict(row) for row in self.changes],
+                'purpose': 'external_experiment_preparation_not_runtime'}
 
     def restore(self):
         if self.snapshot is None or not self.mutation_attempted:
             return {'verified': True, 'changed': False, 'errors': []}
+        self.phase = 'restore'
         p, old = self.profile, self.snapshot
         errors = []
 

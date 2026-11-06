@@ -149,3 +149,18 @@ def test_fan_internal_write_failure_still_restarts_original_service(preparation,
     assert not result['verified'] and result['errors']
     assert io.service == 'active'
     assert io.values[prep.profile.emc_lock_path] == '0'
+
+
+def test_preparation_receipt_does_not_grow_with_restoration(preparation):
+    prep, io = preparation
+    prep.capture()
+    receipt = prep.prepare()
+    count = len(receipt['changes'])
+    assert all(row['phase'] == 'prepare' for row in receipt['changes'])
+    prep.restore()
+    assert len(receipt['changes']) == count
+    assert all(row['phase'] == 'prepare' for row in receipt['changes'])
+    assert any(row['phase'] == 'restore' for row in prep.changes)
+    after = prep.capture()
+    assert after['fan_service'] == 'active'
+    assert after['emc']['lock'] == after['emc']['halt'] == 0

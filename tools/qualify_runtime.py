@@ -116,6 +116,13 @@ def main(argv=None):
                     report['errors'].append(error_record(error, stage='gpu_restore'))
                 report['external_restore'] = preparation.restore()
                 report['errors'].extend(report['external_restore']['errors'])
+                report['external_changes'] = [dict(row) for row in preparation.changes]
+                if args.prepare_experiment and preparation.snapshot is not None:
+                    try:
+                        report['external_after'] = preparation.capture()
+                        recorder.atomic_json('external.after.json', report['external_after'])
+                    except Exception as error:
+                        report['errors'].append(error_record(error, stage='external_after_capture'))
     except Exception as error:
         report['errors'].append(error_record(error, stage='qualification'))
     report.update(result=result, ended_ns=time.monotonic_ns(), status='failed' if report['errors'] else 'passed')
