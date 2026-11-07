@@ -17,8 +17,11 @@ Use exactly one of `--prompt-file` and `--manifest`, and exactly one of
 `--lut-dir` and `--mock SCENARIO`. Synthetic scenarios are `baseline`,
 `flat_quality`, `nonmonotonic`, and `exact_ties`; they require explicit selection
 and are recorded as synthetic. Development is the default mode. Performance
-always rejects with `M4_QUALIFICATION_REQUIRED` before device or GPU work until
-formal M4 evidence support exists. Development device/source mismatches remain
+requires `--qualification REPORT.json`, measured AGX2 data, collected power and
+`--warmup formal`. Missing evidence rejects with `M4_QUALIFICATION_REQUIRED`
+before device or GPU work. Invalid or mismatched evidence also rejects during
+CPU preflight. See [runtime-qualification.md](runtime-qualification.md).
+Development device/source mismatches remain
 explicit in provenance and grant no performance eligibility.
 
 The standard path fixes FP16, greedy decoding, batch size one, K2V2, residual
@@ -57,6 +60,10 @@ distinct length/active-Decode shape, all five groups when Decode is active,
 one Prefill/pack/Decode per case, request-local cache release, then GPU restoration.
 Natural first EOS skips pack/Decode. `--warmup none` explicitly disables this
 work. Neither option constitutes complete JIT/residual-shape M4 qualification.
+`--warmup formal` prepares actual inputs through natural EOS or their requested
+cap across all five groups and records only reachable cache/residual shapes.
+Development can use it to gather evidence; performance requires both this
+per-session preparation and a matching validated M4 report.
 
 Stdout contains request-result JSONL followed by exactly one terminal
 session-result record when output remains writable. Python and native loader

@@ -43,8 +43,10 @@ def configure_parser(parser):
     parser.add_argument('--power-profile', type=Path, help='explicit INA rails/timings JSON; required with --collect-power')
     parser.add_argument('--kivi-root', type=Path, default=Path('/home/agx3/kvolt/third_party/KIVI'))
     parser.add_argument('--native-profile', choices=('agx1', 'agx2'), default='agx1')
-    parser.add_argument('--warmup', choices=('basic', 'none'), default='basic',
-                        help='development warmup; never M4 qualification evidence (default: basic)')
+    parser.add_argument('--warmup', choices=('basic', 'none', 'formal'), default='basic',
+                        help='basic development or full natural-generation formal coverage (default: basic)')
+    parser.add_argument('--qualification', type=Path,
+                        help='M4 evidence report matching the current source, device and measurement profiles')
     return parser
 
 
@@ -225,13 +227,16 @@ def _resolved(args):
 
 
 def _failure(error, stage, code, *, recorder=None, provenance=None, session_id=None):
+    provenance = dict(provenance or {})
+    if 'formal_performance_qualified' in provenance:
+        provenance['formal_performance_qualified'] = False
     session = {'schema_version': 'kvolt-session-v1', 'session_id': session_id or uuid.uuid4().hex,
                'status': 'rejected' if code == 2 else ('interrupted' if code >= 128 else 'failed'),
                'counts': dict.fromkeys(('generation_completed', 'generation_failed', 'generation_interrupted',
                                         'not_run', 'timing_valid', 'energy_valid', 'energy_not_collected',
                                         'request_cleanup_failed'), 0),
                'errors': [error_record(error, stage=stage)], 'exit_code': code,
-               'provenance': provenance or {}}
+               'provenance': provenance}
     if recorder is not None:
         try:
             recorder.save_session(session)
@@ -264,9 +269,15 @@ def run(args, *, lock=None, factories=None, emit=None):
     unlock_errors = []
     with _stdout_channel(emit) as output:
         try:
-            if args.mode == 'performance':
+            qualification_path = getattr(args, 'qualification', None)
+            if args.mode == 'performance' and qualification_path is None:
                 raise ExecutionError('M4_QUALIFICATION_REQUIRED', 'qualification',
-                                     'M4 qualification_required: performance mode is unavailable until M4 evidence is implemented')
+                                     'M4 qualification_required: performance mode requires a verified evidence report')
+            if args.mode == 'performance' and (args.mock is not None or args.native_profile != 'agx2'
+                                              or not args.collect_power or args.warmup != 'formal'):
+                raise ValueError('performance requires measured AGX2 LUTs, collected power and --warmup formal')
+            if args.mode != 'performance' and qualification_path is not None:
+                raise ValueError('--qualification is only used with --mode performance')
             if args.collect_power and args.power_profile is None:
                 raise ValueError('--collect-power requires an explicit --power-profile')
             if args.power_profile is not None and not args.collect_power:
@@ -303,6 +314,19 @@ def run(args, *, lock=None, factories=None, emit=None):
             stage = 'dependency'
             dc = factories.decode_controller(repo, prepared, factories.clock)
             provenance['runtime'] = factories.runtime_metadata()
+            qualification = None
+            if args.mode == 'performance':
+                stage, failure_code = 'qualification', 2
+                from .qualification.contracts import qualification_binding
+                from .qualification.evidence import load_evidence
+                binding = qualification_binding(repo=repo, device_profile=profile, power_profile=power,
+                                                native_profile=args.native_profile,
+                                                runtime=provenance['runtime'])
+                qualification = load_evidence(qualification_path, binding)
+                qualification.assert_requests(prepared)
+                provenance['qualification'] = qualification.as_dict()
+                provenance['formal_evidence_accepted'] = True
+                provenance['lut_device_conditions']['formal_condition_match_qualified'] = True
             options = SessionOptions(model_dir=args.model_dir, output_dir=args.output_dir,
                                      mode=args.mode, collect_power=args.collect_power,
                                      native_profile=args.native_profile)
@@ -322,11 +346,14 @@ def run(args, *, lock=None, factories=None, emit=None):
                     # Release ownership before publishing the terminal result.
                     if record.get('record_type') != 'session_result':
                         output(record)
+                qualification_args = {'qualification': qualification} if qualification is not None else {}
                 runner = factories.runner(backend=backend, repo=repo, device=device, recorder=recorder,
                                           decode_controller=dc, clock=factories.clock, stop=stop,
                                           collector_factory=(lambda index: factories.collector(power, factories.clock))
                                           if args.collect_power else None,
-                                          emit=emit_request, warmup=args.warmup == 'basic')
+                                          emit=emit_request,
+                                          warmup='formal' if args.warmup == 'formal' else args.warmup == 'basic',
+                                          **qualification_args)
                 with _signals(stop):
                     session = runner.run(prepared, options, provenance=provenance, session_id=session_id)
             finally:
@@ -349,6 +376,7 @@ def run(args, *, lock=None, factories=None, emit=None):
             session = _failure(error, stage, stop.exit_code, recorder=recorder,
                                provenance=provenance, session_id=session_id)
         if unlock_errors:
+            session.setdefault('provenance', {})['formal_performance_qualified'] = False
             session['errors'].extend(unlock_errors)
             if session['exit_code'] < 128:
                 session.update(status='failed', exit_code=1)
