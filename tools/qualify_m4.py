@@ -21,6 +21,10 @@ import time
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
+BASELINE_HELPERS = {
+    'scripts/k2_decode_lut/backend.py': '2702735c01b64bd84f146a8b042b96960aa7540ada52b98208caf7421295c859',
+    'scripts/p6/cache.py': 'f0de50eae45cf204f63dd29837ba5b7dd33f2b21b0dc9544473e4c8c5258f24f',
+}
 sys.path.insert(0, str(ROOT/'src'))
 sys.path.insert(0, str(ROOT/'tools'))
 
@@ -127,7 +131,7 @@ def junit(path, *, cpu_suite=False):
 def gpu_environment(environment, args, root):
     return dict(environment, KVOLT_RUN_GPU='1', KVOLT_RUN_B1_GPU='1', KVOLT_NATIVE_PROFILE='agx2',
                 KVOLT_HARDWARE_LOCK='/run/lock/kvolt-p3-hardware.lock',
-                KVOLT_BASELINE=str(args.kivi_root.resolve().parents[1]),
+                KVOLT_BASELINE=str(args.baseline_root.resolve()),
                 KVOLT_KIVI_ROOT=str(args.kivi_root.resolve()), KVOLT_SNAPSHOT=str(args.model_dir.resolve()),
                 KVOLT_MODEL_SNAPSHOT=str(args.model_dir.resolve()),
                 KVOLT_M1_COHORT=str(root/'cpu/m1-cohort.json'), KVOLT_B1_REPORT=str(root/'cpu/b1-prefill-report.json'))
@@ -138,6 +142,15 @@ def cpu_environment(lut_dir):
     for name in ('KVOLT_RUN_GPU', 'KVOLT_RUN_B1_GPU'):
         environment.pop(name, None)
     return environment
+
+
+def baseline_sources(root):
+    """Identify the independent reference helpers without inferring KIVI layout."""
+    root = Path(root).resolve()
+    require(root.is_dir(), 'explicit baseline root is missing')
+    for relative, expected in BASELINE_HELPERS.items():
+        require(file_sha256(root/relative) == expected, 'pinned reference helper changed: '+relative)
+    return {'root': str(root), 'files_sha256': dict(BASELINE_HELPERS)}
 
 
 def prepare(args):
@@ -166,6 +179,8 @@ def prepare(args):
     _device_profile(profile_path)
     _power_profile(power_path)
     (root/'cpu').mkdir()
+    reference = baseline_sources(args.baseline_root)
+    write(root/'cpu/reference-helpers.json', reference)
     m1 = root/'cpu/m1-cohort.json'
     m1.write_bytes(args.m1_cohort.read_bytes())
     require(file_sha256(m1) == 'e9f0c05e0d21e13356f6a64d1176b03bcff613c708b0b0fd72228f711aadc20d', 'pinned M1 correctness cohort changed')
@@ -186,6 +201,7 @@ def prepare(args):
     plan = {'schema_version': 'kvolt-m4-plan-v1', 'source_commit': commit,
             'source_sha256': source_hashes(), 'root': str(root),
             'model_dir': str(args.model_dir.resolve()), 'kivi_root': str(args.kivi_root.resolve()),
+            'baseline_root': reference['root'],
             'lut_dir': str(args.lut_dir.resolve()), 'device_profile': str(profile_path),
             'power_profile': str(power_path), 'manifest': str(manifest), 'eos_manifest': str(eos_manifest),
             'coverage': coverage, 'cpu': cpu, 'gpu': gpu,
@@ -207,7 +223,7 @@ def validate_plan(path, expected_digest):
     artifact(path.parent, path.name)
     require(file_sha256(path) == expected_digest, 'frozen plan SHA-256 mismatch')
     plan = read_json(path)
-    fields = {'schema_version', 'source_commit', 'source_sha256', 'root', 'model_dir', 'kivi_root',
+    fields = {'schema_version', 'source_commit', 'source_sha256', 'root', 'model_dir', 'kivi_root', 'baseline_root',
               'lut_dir', 'device_profile', 'power_profile', 'manifest', 'eos_manifest', 'coverage',
               'cpu', 'gpu', 'requests', 'eos_requests', 'formal_evaluation_run', 'prepared_ns', 'frozen_files'}
     require(isinstance(plan, dict) and set(plan) == fields and plan['schema_version'] == 'kvolt-m4-plan-v1', 'unknown frozen plan schema')
@@ -223,13 +239,15 @@ def validate_plan(path, expected_digest):
     for relative, digest in plan['frozen_files'].items():
         require(isinstance(digest, str) and re.fullmatch('[0-9a-f]{64}', digest), 'invalid frozen file digest')
         require(file_sha256(artifact(root, relative)) == digest, 'frozen M4 evidence changed: '+relative)
-    for relative in ('cpu/tests.xml', 'cpu/gpu.xml', 'cpu/pytest.log', 'cpu/gpu.log', 'cpu/m1-cohort.json', 'cpu/b1-prefill-report.json'):
+    for relative in ('cpu/tests.xml', 'cpu/gpu.xml', 'cpu/pytest.log', 'cpu/gpu.log', 'cpu/m1-cohort.json', 'cpu/b1-prefill-report.json', 'cpu/reference-helpers.json'):
         require(relative in plan['frozen_files'], 'missing frozen correctness output')
     require(junit(root/'cpu/tests.xml', cpu_suite=True) == plan['cpu'] and junit(root/'cpu/gpu.xml') == plan['gpu'], 'recorded correctness counts changed')
     require(plan['cpu']['passed'] > 0 and plan['gpu']['run'] == plan['gpu']['passed'] == 102
             and plan['gpu']['skipped'] == 0, 'correctness evidence was not fully executed')
     require(plan['coverage'] == {'1024': 512, '4096': 512, '8192': 512}, 'M4 full-cap coverage mismatch')
     require(file_sha256(root/'cpu/m1-cohort.json') == 'e9f0c05e0d21e13356f6a64d1176b03bcff613c708b0b0fd72228f711aadc20d', 'pinned M1 correctness cohort changed')
+    require(read_json(root/'cpu/reference-helpers.json') == baseline_sources(plan['baseline_root']),
+            'independent baseline helpers changed after preparation')
     # Sysfs controls are trusted project inputs, not arbitrary root write targets.
     profile = read_json(root/'device-profile.json')
     patterns = {
@@ -545,7 +563,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='action', required=True)
     prepare_parser = sub.add_parser('prepare', help='freeze inputs and run CPU/GPU correctness without admin writes')
-    for name in ('model-dir','lut-dir','device-profile','power-profile','kivi-root','manifest','eos-manifest','m1-cohort','output-dir'):
+    for name in ('model-dir','lut-dir','device-profile','power-profile','kivi-root','baseline-root','manifest','eos-manifest','m1-cohort','output-dir'):
         prepare_parser.add_argument('--'+name, type=Path, required=True)
     execute_parser = sub.add_parser('execute', help='explicit temporary device preparation and integrated M4 verification')
     execute_parser.add_argument('plan', type=Path)

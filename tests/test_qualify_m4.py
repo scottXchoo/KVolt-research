@@ -1,6 +1,7 @@
 """CPU tests for reviewed planning, control cleanup and report publication."""
 from contextlib import contextmanager
 import copy
+import hashlib
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,6 +22,11 @@ def driver():
 
 @pytest.fixture
 def plan_bundle(tmp_path, driver, monkeypatch):
+    reference = tmp_path.parent/(tmp_path.name+'-reference')
+    helper = reference/'scripts/reference.py'
+    helper.parent.mkdir(parents=True)
+    helper.write_text('pinned independent reference\n')
+    monkeypatch.setattr(driver, 'BASELINE_HELPERS', {'scripts/reference.py': file_sha256(helper)})
     profile = {
         'gpu_path': '/sys/devices/platform/bus@0/17000000.gpu/devfreq/17000000.gpu',
         'emc_rate_path': '/sys/kernel/debug/bpmp/debug/clk/emc/rate',
@@ -48,11 +54,12 @@ def plan_bundle(tmp_path, driver, monkeypatch):
     # M1 fixture. Stub only its content pin, while retaining real per-file hashes.
     (tmp_path/'cpu/m1-cohort.json').write_text('pinned M1 fixture')
     (tmp_path/'cpu/b1-prefill-report.json').write_text('{"status":"passed"}')
+    driver.write(tmp_path/'cpu/reference-helpers.json', driver.baseline_sources(reference))
     actual_sha = driver.file_sha256
     monkeypatch.setattr(driver, 'file_sha256', lambda path: 'e9f0c05e0d21e13356f6a64d1176b03bcff613c708b0b0fd72228f711aadc20d'
         if Path(path) == tmp_path/'cpu/m1-cohort.json' else actual_sha(path))
     plan = {'schema_version': 'kvolt-m4-plan-v1', 'source_commit': 'commit', 'source_sha256': {'src/a.py': 'a'*64},
-            'root': str(tmp_path), 'model_dir': '/model', 'kivi_root': '/kivi', 'lut_dir': '/lut',
+            'root': str(tmp_path), 'model_dir': '/model', 'kivi_root': '/kivi', 'baseline_root': str(reference), 'lut_dir': '/lut',
             'device_profile': str(tmp_path/'device-profile.json'), 'power_profile': str(tmp_path/'power-profile.json'),
             'manifest': str(tmp_path/'cohort/manifest.json'), 'eos_manifest': str(tmp_path/'eos-cohort/manifest.json'),
             'coverage': {'1024': 512, '4096': 512, '8192': 512}, 'cpu': driver.junit(tmp_path/'cpu/tests.xml'),
@@ -76,7 +83,7 @@ def test_validate_frozen_plan_without_executing_recorded_commands(driver, plan_b
 
 
 @pytest.mark.parametrize('mutation', ['digest', 'escape', 'symlink', 'source', 'counts', 'coverage',
-                                     'profile_target', 'profile_path', 'missing_file', 'unknown_key'])
+                                     'profile_target', 'profile_path', 'missing_file', 'unknown_key', 'baseline_changed'])
 def test_unsafe_or_stale_plan_denied(driver, plan_bundle, monkeypatch, mutation):
     bundle = plan_bundle
     if mutation == 'digest':
@@ -105,6 +112,8 @@ def test_unsafe_or_stale_plan_denied(driver, plan_bundle, monkeypatch, mutation)
         (bundle.root/'cpu/gpu.log').unlink()
     elif mutation == 'unknown_key':
         bundle.plan['command'] = ['arbitrary', 'root', 'command']
+    elif mutation == 'baseline_changed':
+        (Path(bundle.plan['baseline_root'])/'scripts/reference.py').write_text('changed reference')
     digest = bundle.save(refresh_files=False)
     with pytest.raises(ValueError):
         driver.validate_plan(bundle.path, digest)
@@ -244,11 +253,13 @@ def test_skipped_cpu_data_check_is_not_a_passing_suite(driver, tmp_path):
 
 
 def test_gpu_stage_explicitly_enables_both_gates_and_freezes_paths(driver, tmp_path):
-    args = SimpleNamespace(kivi_root=tmp_path/'baseline/third_party/KIVI', model_dir=tmp_path/'model')
+    args = SimpleNamespace(kivi_root=tmp_path/'kivi-source/third_party/KIVI', model_dir=tmp_path/'model',
+                           baseline_root=tmp_path/'independent-reference')
     env = driver.gpu_environment({'KVOLT_HARDWARE_LOCK': '/tmp/unsafe', 'KVOLT_MODEL_SNAPSHOT': '/wrong'}, args, tmp_path)
     assert env['KVOLT_RUN_GPU'] == env['KVOLT_RUN_B1_GPU'] == '1'
     assert env['KVOLT_HARDWARE_LOCK'] == '/run/lock/kvolt-p3-hardware.lock'
     assert env['KVOLT_MODEL_SNAPSHOT'] == str(tmp_path/'model')
+    assert env['KVOLT_BASELINE'] == str(tmp_path/'independent-reference')
     assert env['KVOLT_M1_COHORT'] == str(tmp_path/'cpu/m1-cohort.json')
     assert env['KVOLT_B1_REPORT'] == str(tmp_path/'cpu/b1-prefill-report.json')
 
@@ -267,6 +278,21 @@ def test_progress_channel_failure_cannot_abort_finally_cleanup(driver, monkeypat
         def write(self, value): raise OSError('progress pipe closed')
     monkeypatch.setattr(driver.sys, 'stderr', Closed())
     driver.progress('final restoration starting')
+
+
+@pytest.mark.parametrize('state', ['valid', 'missing', 'tampered'])
+def test_independent_baseline_helpers_are_pinned_before_gpu_stage(driver, tmp_path, monkeypatch, state):
+    helper = tmp_path/'scripts/reference.py'
+    helper.parent.mkdir()
+    contents = b'independent pinned reference\n'
+    monkeypatch.setattr(driver, 'BASELINE_HELPERS', {'scripts/reference.py': hashlib.sha256(contents).hexdigest()})
+    if state != 'missing':
+        helper.write_bytes(contents if state == 'valid' else b'changed source')
+    if state == 'valid':
+        assert driver.baseline_sources(tmp_path)['files_sha256'] == driver.BASELINE_HELPERS
+    else:
+        with pytest.raises((ValueError, FileNotFoundError)):
+            driver.baseline_sources(tmp_path)
 
 
 def test_actual_performance_validation_uses_new_lock_and_candidate(driver, tmp_path, monkeypatch):

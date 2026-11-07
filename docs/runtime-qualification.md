@@ -30,7 +30,8 @@ diagnostic inputs remain excluded from the formal evaluation.
 python tools/qualify_m4.py prepare \
   --model-dir SNAPSHOT --lut-dir SEALED_AGX2_LUTS \
   --device-profile DEVICE.json --power-profile POWER.json \
-  --kivi-root KIVI --manifest DEVELOPMENT_MANIFEST.json \
+  --kivi-root KIVI --baseline-root INDEPENDENT_REFERENCE_ROOT \
+  --manifest DEVELOPMENT_MANIFEST.json \
   --eos-manifest FIRST_EOS_MANIFEST.json --m1-cohort PINNED_M1_INPUTS.json \
   --output-dir NEW_M4_DIRECTORY
 ```
@@ -83,6 +84,10 @@ flags and the common lock path are explicitly set; CPU-stage opt-ins are cleared
 The CPU suite uses the supplied measured LUT directory and permits only the
 existing 103 integration GPU skips. The separately selected 102 cache/Prefill
 GPU checks must all pass. Their Prefill report is written inside this attempt.
+`--baseline-root` identifies the independent reference Python helpers separately
+from the KIVI checkout. Both helper hashes are checked before correctness tests,
+recorded in the attempt, and checked again before execution. The AGX2 reference
+root is `/home/agx31/kvolt-m1-reference`; it is never inferred from `--kivi-root`.
 
 ## Per-session formal preparation
 
