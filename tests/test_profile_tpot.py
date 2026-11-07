@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from contextlib import ExitStack
 import hashlib
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -144,6 +145,169 @@ class FrozenInputTests(unittest.TestCase):
         self.seal()
         with self.assertRaisesRegex(ValueError, 'frozen input path mismatch'):
             validate_inputs(self.path, self.digest)
+
+
+class RuntimeIsolationTests(unittest.TestCase):
+    """Exercise main in fresh processes against two independently importable trees."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        self.baseline, self.driver = self.root / 'baseline', self.root / 'driver'
+        for root, commit in ((self.baseline, 'baseline-sha'), (self.driver, 'driver-sha')):
+            files = {
+                '__init__.py': f'COMMIT = {commit!r}\n',
+                'execution/__init__.py': '', 'execution/runner.py': 'MARKER = "runner"\n',
+                'backend/__init__.py': '', 'backend/model.py': 'MARKER = "model"\n',
+                'backend/cache.py': 'def validate_packed_cache(*args): pass\n',
+                'backend/decode.py': 'def validate_packed_cache(*args): pass\n',
+                'qualification/__init__.py': '',
+                'qualification/contracts.py': 'def file_sha256(path): return "plan-sha"\n',
+                'cli.py': ('import argparse\n'
+                           'def _parser():\n'
+                           '    parser = argparse.ArgumentParser()\n'
+                           '    parser.add_argument("--output-dir")\n'
+                           '    parser.parse_args = lambda args: parser.parse_known_args(args)[0]\n'
+                           '    return parser\n'),
+                'device.py': ('from contextlib import nullcontext\n'
+                              'class DeviceProfile:\n'
+                              '    from_json = staticmethod(lambda path: None)\n'
+                              'HardwareLock = nullcontext\n'),
+                'run_cli.py': ('from dataclasses import dataclass\n'
+                               'from pathlib import Path\n'
+                               'import json, os\n'
+                               'from . import COMMIT\n'
+                               '@dataclass\n'
+                               'class RunFactories:\n'
+                               '    backend: object = None\n'
+                               'def run(args, **kwargs):\n'
+                               '    root = Path(args.output_dir)\n'
+                               '    root.mkdir()\n'
+                               '    runtime = {"source_commit": os.environ.get("TEST_SOURCE", COMMIT),\n'
+                               '               "source_worktree_dirty": os.environ.get("TEST_DIRTY") == "1"}\n'
+                               '    (root/"session.json").write_text(json.dumps({"provenance": {"runtime": runtime}}))\n'
+                               '    return 0\n'),
+            }
+            for relative, content in files.items():
+                path = root / 'src/kvolt_runtime' / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content)
+        helper = self.driver / 'tools/qualify_m4.py'
+        helper.parent.mkdir(parents=True)
+        helper.write_text(
+            'from pathlib import Path\nimport sys, json\nfrom contextlib import contextmanager\n'
+            'sys.path.insert(0, str(Path(__file__).resolve().parents[1]/"src"))\n'
+            'import kvolt_runtime\n'
+            '@contextmanager\n'
+            'def hardware_scope(*args):\n'
+            '    try: yield\n'
+            '    finally: (Path(__file__).parent/"restored").write_text("restored")\n'
+            'progress = lambda message: None\n'
+            'def read_json(path): return json.loads(Path(path).read_text())\n'
+            'def write(path, value):\n'
+            '    path = Path(path)\n'
+            '    path.parent.mkdir(parents=True, exist_ok=True)\n'
+            '    path.write_text(json.dumps(value))\n')
+
+    def invoke(self, *, preimport=False, mixed=False, source=None, dirty=False):
+        import os
+        profile = Path(__file__).resolve().parents[1] / 'tools/profile_tpot.py'
+        output = self.root / 'output'
+        script = '''
+import importlib.util, json, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("profile_under_test", sys.argv[1])
+profile = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(profile)
+baseline, driver, output = map(Path, sys.argv[2:5])
+if sys.argv[5] == "preimport":
+    sys.path.insert(0, str(driver/"src"))
+    import kvolt_runtime
+elif sys.argv[5] == "mixed":
+    sys.path.insert(0, str(baseline/"src"))
+    import kvolt_runtime
+    wrong = importlib.util.spec_from_file_location("kvolt_runtime.backend.model", driver/"src/kvolt_runtime/backend/model.py")
+    module = importlib.util.module_from_spec(wrong)
+    wrong.loader.exec_module(module)
+    sys.modules[wrong.name] = module
+profile.ROOT = driver
+profile.os.geteuid = lambda: 0
+profile.source_commit = lambda root: "baseline-sha" if root == baseline else "driver-sha"
+profile.validate_inputs = lambda *args: dict.fromkeys(
+    ("device_profile", "power_profile", "manifest", "model_dir", "lut_dir", "kivi_root"), "fixture") | {"source_commit": "plan-source"}
+try:
+    profile.main(["--plan", "fixture", "--plan-sha256", "plan-sha",
+                  "--runtime-root", str(baseline), "--output-dir", str(output)])
+except ValueError as error:
+    print(str(error), file=sys.stderr)
+    sys.exit(3)
+'''
+        environment = dict(os.environ)
+        environment.pop('TEST_SOURCE', None)
+        environment.pop('TEST_DIRTY', None)
+        if source is not None:
+            environment['TEST_SOURCE'] = source
+        if dirty:
+            environment['TEST_DIRTY'] = '1'
+        result = subprocess.run([sys.executable, '-I', '-c', script, str(profile), str(self.baseline),
+                                 str(self.driver), str(output), 'preimport' if preimport else ('mixed' if mixed else 'fresh')],
+                                text=True, capture_output=True, env=environment)
+        status_path = output / 'profile-status.json'
+        status = json.loads(status_path.read_text()) if status_path.exists() else None
+        return result, status
+
+    def test_selected_runtime_survives_helper_prepend_in_fresh_process(self):
+        result, status = self.invoke()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        session = json.loads((self.root / 'output/run-1/session.json').read_text())
+        self.assertEqual(session['provenance']['runtime']['source_commit'], 'baseline-sha')
+        self.assertEqual(status['status'], 'completed')
+        self.assertTrue(status['sessions'][0]['source_verified'])
+        for name in ('kvolt_runtime', 'kvolt_runtime.execution.runner',
+                     'kvolt_runtime.backend.model', 'kvolt_runtime.cli'):
+            self.assertIn(name, status['runtime_modules'])
+        for path in status['runtime_modules'].values():
+            self.assertTrue(Path(path).is_relative_to(self.baseline / 'src/kvolt_runtime'))
+
+    def test_preimported_wrong_package_is_rejected_before_hardware(self):
+        result, status = self.invoke(preimport=True)
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertIn('runtime module outside selected checkout', result.stderr)
+        self.assertIsNone(status)
+        self.assertFalse((self.driver / 'tools/restored').exists())
+
+    def test_preimported_wrong_submodule_is_rejected_with_correct_package(self):
+        result, status = self.invoke(mixed=True)
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertIn('runtime module outside selected checkout: kvolt_runtime.backend.model', result.stderr)
+        self.assertIsNone(status)
+        self.assertFalse((self.driver / 'tools/restored').exists())
+
+    def test_success_exit_with_mismatched_session_source_is_failed(self):
+        result, status = self.invoke(source='driver-sha')
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertEqual(status['status'], 'failed')
+        self.assertEqual(status['sessions'][0]['exit_code'], 0)
+        self.assertFalse(status['sessions'][0]['source_verified'])
+        self.assertIn('session Runtime source mismatch', status['errors'][0]['message'])
+        self.assertEqual((self.driver / 'tools/restored').read_text(), 'restored')
+
+    def test_success_exit_with_dirty_session_source_is_failed(self):
+        result, status = self.invoke(dirty=True)
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertEqual(status['status'], 'failed')
+        self.assertFalse(status['sessions'][0]['source_verified'])
+        self.assertIn('session Runtime source mismatch', status['errors'][0]['message'])
+        self.assertEqual((self.driver / 'tools/restored').read_text(), 'restored')
+
+    def test_missing_or_unknown_session_source_is_rejected(self):
+        from tools.profile_tpot import verify_session_source
+        for session in ({}, {'provenance': {'runtime': {'source_commit': 'baseline-sha'}}},
+                        {'provenance': {'runtime': {'source_commit': 'baseline-sha', 'source_worktree_dirty': None}}}):
+            with self.subTest(session=session):
+                with self.assertRaisesRegex(ValueError, 'session Runtime source mismatch'):
+                    verify_session_source(session, 'baseline-sha')
 
 
 if __name__ == "__main__":

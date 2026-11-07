@@ -76,6 +76,44 @@ def source_commit(root):
     return subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip()
 
 
+def runtime_modules(runtime):
+    """Reject cached or redirected Runtime imports outside the selected tree."""
+    package = runtime.resolve() / 'src/kvolt_runtime'
+    paths = {}
+    for name, module in list(sys.modules.items()):
+        if name != 'kvolt_runtime' and not name.startswith('kvolt_runtime.'):
+            continue
+        filename = getattr(module, '__file__', None)
+        path = Path(filename).resolve() if filename else None
+        if path is None or not path.is_relative_to(package):
+            raise ValueError('runtime module outside selected checkout: '+name)
+        if name == 'kvolt_runtime' and path != package / '__init__.py':
+            raise ValueError('runtime module outside selected checkout: '+name)
+        paths[name] = str(path)
+    return paths
+
+
+def pin_runtime(runtime):
+    """Load the package before helpers can prepend their own checkout's src."""
+    sys.path.insert(0, str(runtime / 'src'))
+    importlib.import_module('kvolt_runtime')
+    runtime_modules(runtime)
+    # These imports are CPU safe. Pin the actual execution entry points as well
+    # as the package __path__, and reject preexisting mixed-checkout modules.
+    for name in ('execution.runner', 'backend.model', 'cli'):
+        importlib.import_module('kvolt_runtime.'+name)
+    return runtime_modules(runtime)
+
+
+def verify_session_source(session, commit):
+    runtime = session.get('provenance', {}).get('runtime', {})
+    if runtime.get('source_commit') != commit or runtime.get('source_worktree_dirty') is not False:
+        raise ValueError('session Runtime source mismatch: requested '+commit+
+                         ', observed '+str(runtime.get('source_commit'))+
+                         ', dirty='+str(runtime.get('source_worktree_dirty')))
+    return runtime
+
+
 def validate_inputs(path, digest):
     """Bind diagnostic inputs to a reviewed plan, independently of its source."""
     from kvolt_runtime.qualification.audit import artifact, read_json, require
@@ -117,12 +155,13 @@ def main(argv=None):
     # Source choice precedes every Runtime import, allowing the same diagnostic
     # driver to profile a baseline Git worktree without copying modified code.
     sys.path.insert(0, str(ROOT/'tools'))
-    sys.path.insert(0, str(runtime/'src'))
+    pin_runtime(runtime)
     from qualify_m4 import hardware_scope, progress, read_json, write
     from kvolt_runtime.cli import _parser
     from kvolt_runtime.device import DeviceProfile, HardwareLock
     from kvolt_runtime.qualification.contracts import file_sha256
     from kvolt_runtime.run_cli import RunFactories, run
+    imported_runtime = runtime_modules(runtime)
     plan = validate_inputs(args.plan, args.plan_sha256)
     profile = DeviceProfile.from_json(plan['device_profile'])
     root = args.output_dir.resolve()
@@ -130,6 +169,7 @@ def main(argv=None):
     status = {'schema_version': 'kvolt-tpot-profile-v1', 'status': 'running',
               'formal_evaluation_run': False, 'formal_performance_qualified': False,
               'runtime_commit': commit, 'driver_commit': driver_commit,
+              'runtime_modules': imported_runtime,
               'runtime_root': str(runtime), 'plan_sha256': file_sha256(args.plan),
               'plan_source_commit': plan['source_commit'], 'repeats': args.repeats,
               'instrumentation': 'host call wrappers; includes wrapper overhead; nested durations overlap',
@@ -157,9 +197,15 @@ def main(argv=None):
                     finally:
                         write(root/f'run-{index+1}.profile.json', {'rows': trace.rows})
                         write(root/f'run-{index+1}.stdout.json', {'records': records})
-                    status['sessions'].append({'path': str(output), 'exit_code': code})
+                    session = {'path': str(output), 'exit_code': code, 'source_verified': False}
+                    status['sessions'].append(session)
                     if code != 0:
                         raise ValueError(f'diagnostic session failed with exit {code}')
+                    actual = read_json(output/'session.json')
+                    session['runtime'] = actual.get('provenance', {}).get('runtime')
+                    verify_session_source(actual, commit)
+                    session['source_verified'] = True
+                    status['runtime_modules'] = runtime_modules(runtime)
             status['status'] = 'completed'
     except BaseException as error:
         status['status'] = 'failed'

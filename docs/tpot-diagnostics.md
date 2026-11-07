@@ -166,3 +166,26 @@ rejected. The selected Runtime and driver checkouts must have clean code, tests,
 and tools; their commits are recorded separately. A different Runtime commit
 is allowed for baseline/fixed comparison. This does not assert that the
 diagnostic source has passed M4 qualification.
+
+Before importing the shared qualification helper, the driver imports the
+selected `kvolt_runtime` package and the CPU-safe Runner, model and CLI modules.
+It verifies the package's exact `__init__.py` and every loaded Runtime module's
+resolved file path against the selected checkout, rejecting a previously
+imported package or submodule from another tree. This pins package lookup even
+when the helper prepends its own checkout's `src` to `sys.path`. Resolved module
+paths are recorded in `profile-status.json.runtime_modules`.
+
+Every successful session is checked again using its actual
+`session.json.provenance.runtime`: `source_commit` must equal the requested
+Runtime commit and `source_worktree_dirty` must be exactly `false`. Missing,
+dirty or mismatched provenance fails the overall profile even if the session
+returned exit 0. Each status session includes `source_verified` and the observed
+Runtime provenance. Rejection inside the hardware scope still restores hardware.
+
+The initial `baseline-r1` comparison attempt is invalid: the requested source
+was `8fae164`, but the qualification helper redirected the first package import
+to driver source `c01da62`. Its session provenance and `stage_timing` confirm the
+modified Runtime ran. Preserve those artifacts as an invalid comparison; they
+cannot support a baseline/fixed performance claim. A fresh baseline and fixed
+run using the corrected driver are required. This provenance error does not
+alter the archived r4 results or authorize a policy/LUT change.
