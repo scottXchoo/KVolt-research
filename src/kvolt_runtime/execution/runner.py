@@ -62,13 +62,49 @@ class _RequestInterrupted(Exception):
 class SessionRunner:
     def __init__(self, *, backend, repo, device, recorder, decode_controller,
                  clock=time.monotonic_ns, stop=None, collector_factory=None,
-                 emit=None, warmup=True):
+                 emit=None, warmup=True, qualification=None):
         self.backend, self.repo, self.device, self.recorder = backend, repo, device, recorder
         self.dc, self.clock = decode_controller, clock
         self.pc = PrefillController(repo, clock=clock)
         self.stop = stop if stop is not None else StopController()
         self.collector_factory, self.emit = collector_factory, emit or (lambda record: None)
         self.warmup = warmup
+        self.qualification = qualification
+        self._first_collector = None
+
+    def _performance_gate(self, prepared, options, provenance):
+        """Reject incomplete or mismatched qualification before hardware work."""
+        from ..qualification.contracts import QualificationGrant
+        if not isinstance(self.qualification, QualificationGrant):
+            raise ContractError('M4 validated qualification grant is required for performance execution')
+        if self.warmup != 'formal' or self.collector_factory is None or not options.collect_power:
+            raise ContractError('performance execution requires formal warmup and a power collector')
+        grant = self.qualification
+        grant.assert_requests(prepared)
+        binding = grant.binding
+        source = self.repo.provenance
+        lut = {name: getattr(source, name) for name in
+               ('kind', 'source_device', 'source_commit', 'manifest_sha256', 'files_sha256')}
+        lut['files_sha256'] = dict(lut['files_sha256'])
+        if source.kind != 'measured' or lut != binding.get('lut'):
+            raise ContractError('runtime LUT differs from measured qualification source')
+        if options.native_profile != binding.get('native_profile'):
+            raise ContractError('runtime native profile differs from qualification')
+        profile = getattr(self.device, 'profile', None)
+        if profile is None or profile.as_dict() != binding.get('device_profile'):
+            raise ContractError('runtime device settings differ from qualification')
+        for field in ('device_profile', 'power_profile'):
+            if field in provenance and provenance[field] != binding.get(field):
+                raise ContractError('runtime ' + field + ' differs from qualification')
+        # Construct without starting acquisition, retaining this exact collector
+        # for request zero rather than trusting a caller-provided provenance dict.
+        self._first_collector = self.collector_factory(0)
+        self._check_collector(self._first_collector)
+
+    def _check_collector(self, collector):
+        profile = getattr(collector, 'profile', None)
+        if profile is None or profile.to_dict() != self.qualification.binding.get('power_profile'):
+            raise ContractError('runtime power settings differ from qualification')
 
     def _interruption_boundary(self):
         if self.stop.requested:
@@ -88,6 +124,10 @@ class SessionRunner:
         A natural first EOS skips packing/Decode, including during warmup. This
         limited warmup does not claim complete JIT/residual-shape qualification.
         """
+        if self.warmup == 'formal':
+            from ..qualification.warmup import formal_warmup
+            return formal_warmup(backend=self.backend, device=self.device, prepared=prepared,
+                                 snapshot=snapshot, clock=self.clock, stop=self.stop)
         report = {'policy': 'development_basic' if self.warmup else 'none',
                   'formal_coverage_qualified': False, 'cases': [], 'errors': [], 'started_ns': self.clock()}
         if not self.warmup:
@@ -174,12 +214,15 @@ class SessionRunner:
         result['attempt_started_ns'] = self.clock()
         generation['status'] = 'failed'
         try:
-            result['device']['start'] = self._verified_device_receipt(self.device.prepare_request(), stage)
             if collect_power:
                 if self.collector_factory is None:
                     raise ExecutionError('POWER_COLLECTOR_MISSING', 'power_start', 'power collection requested without a collector')
+                collector = self._first_collector if index == 0 and self._first_collector is not None else self.collector_factory(index)
+                if self.qualification is not None:
+                    self._check_collector(collector)
+            result['device']['start'] = self._verified_device_receipt(self.device.prepare_request(), stage)
+            if collect_power:
                 stage = 'power_start'
-                collector = self.collector_factory(index)
                 result['power_start'] = collector.start()
                 if not result['power_start'].get('ready') or result['power_start'].get('errors'):
                     raise ExecutionError('POWER_NOT_READY', stage, 'collector did not produce a valid pre-t0 sample',
@@ -370,10 +413,15 @@ class SessionRunner:
         stage = 'device_preparation'
         try:
             if options.mode == 'performance':
-                raise ContractError('M4 qualification evidence is required; M3 permits development execution only')
+                stage = 'qualification'
+                self._performance_gate(prepared, options, provenance or {})
+                session['qualification'] = self.qualification.as_dict()
+            stage = 'device_preparation'
             snapshot = self.device.capture()
             if not snapshot.get('verified'):
                 raise PreparationError('DEVICE_CAPTURE_UNVERIFIED', stage, 'device capture is unverified')
+            if options.mode == 'performance':
+                self.qualification.assert_device(snapshot)
             stage = 'device_snapshot_save'
             self.recorder.atomic_json('device.before.json', snapshot)
             stage = 'device_preparation'
@@ -395,6 +443,8 @@ class SessionRunner:
                         raise ExecutionError('TOKENIZER_MISMATCH', stage, 'loaded tokenizer differs from frozen input IDs')
                 stage = 'warmup'
                 session['warmup'] = self._warmup(prepared, snapshot)
+                if options.mode == 'performance':
+                    session['provenance']['formal_performance_qualified'] = True
                 for index, item in enumerate(prepared.requests):
                     if session['exit_code'] or self.stop.requested:
                         break
@@ -411,6 +461,8 @@ class SessionRunner:
                     if self.stop.requested:
                         session['exit_code'] = self.stop.exit_code
         except Exception as error:
+            if stage == 'warmup' and isinstance(getattr(error, 'receipt', None), dict):
+                session['warmup'] = error.receipt
             session['errors'].append(error_record(error, stage=stage))
             if isinstance(error, ContractError) and options.mode == 'performance':
                 session['exit_code'] = EXIT_INPUT
@@ -453,6 +505,8 @@ class SessionRunner:
                 counts['request_cleanup_failed'] += int(result['cleanup']['status'] == 'failed')
             session['counts'] = counts
             session['status'] = 'interrupted' if self.stop.requested else ('completed' if session['exit_code'] == 0 else 'failed')
+            if session['status'] != 'completed':
+                session['provenance']['formal_performance_qualified'] = False
             session['ended_ns'] = self.clock()
             try:
                 self.recorder.save_session(session)
@@ -460,6 +514,7 @@ class SessionRunner:
                 session['errors'].append(error_record(error, stage='session_save'))
                 if not self.stop.requested:
                     session.update(status='failed', exit_code=EXIT_TECHNICAL)
+                session['provenance']['formal_performance_qualified'] = False
             self.emit({'schema_version': 'kvolt-stdout-v1', 'record_type': 'session_result',
                        'session_id': session['session_id'], 'status': session['status'],
                        'counts': session['counts'], 'errors': session['errors'],
