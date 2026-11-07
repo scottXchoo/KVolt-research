@@ -31,14 +31,18 @@ python tools/qualify_m4.py prepare \
   --model-dir SNAPSHOT --lut-dir SEALED_AGX2_LUTS \
   --device-profile DEVICE.json --power-profile POWER.json \
   --kivi-root KIVI --manifest DEVELOPMENT_MANIFEST.json \
-  --eos-manifest FIRST_EOS_MANIFEST.json --output-dir NEW_M4_DIRECTORY
+  --eos-manifest FIRST_EOS_MANIFEST.json --m1-cohort PINNED_M1_INPUTS.json \
+  --output-dir NEW_M4_DIRECTORY
 ```
 
-Only the explicit `execute PLAN.json` stage temporarily prepares the existing
+Only the explicit `execute PLAN.json --plan-sha256 PREPARE_EMITTED_SHA256` stage temporarily prepares the existing
 CPU/EMC/fan controls and writes GPU settings. Run this stage with the necessary
 administrator access. It never switches MAXN, reboots, edits system configuration
 or changes file permissions. It uses the existing nonblocking common lock and
 restores captured controls in `finally`. A busy lock rejects immediately.
+The digest is printed by `prepare` and must identify that reviewed plan exactly.
+The driver validates frozen source, paths, profiles, test counts and input hashes
+before hardware access; recorded commands are provenance and are never executed.
 
 The integrated checks cover all eight GPU frequencies and repeated no-op
 applications, formal preparation and repeated adaptive requests, naturally
@@ -57,6 +61,28 @@ null. Actual SLO failures never become technical failures.
 Every plan permits one execution attempt. A failed attempt keeps its evidence;
 freeze a new plan/output directory for a corrected attempt. No automatic retry
 or silent cohort extension occurs.
+
+After the integrated checks and first full restoration, the driver creates an
+immutable candidate report. Under a new common lock and temporary external
+preparation, it runs the actual `--mode performance --qualification CANDIDATE
+--warmup formal` session and independently audits its saved results. This is a
+diagnostic qualification session using frozen excluded inputs. Its new proof
+files do not rewrite the candidate's already hashed artifacts. After this second
+restoration succeeds, the same candidate bytes are published as
+`qualification.json`. Any performance validation, restoration or publication
+failure removes both candidate and final report paths. Failed raw evidence is
+retained, but does not leave an available performance qualification.
+
+The `tests.run=1` count in a category summary records one executed independent
+category audit, containing multiple assertions. It is not a substituted CPU/GPU
+test-suite count. Original JUnit counts, including every skipped CPU-suite GPU
+test, remain in the frozen plan and original JUnit files. Separately selected
+GPU correctness tests must execute with zero skips.
+The pinned M1 input file is copied into this attempt. Both existing GPU opt-in
+flags and the common lock path are explicitly set; CPU-stage opt-ins are cleared.
+The CPU suite uses the supplied measured LUT directory and permits only the
+existing 103 integration GPU skips. The separately selected 102 cache/Prefill
+GPU checks must all pass. Their Prefill report is written inside this attempt.
 
 ## Per-session formal preparation
 
