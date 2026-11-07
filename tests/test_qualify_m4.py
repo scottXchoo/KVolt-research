@@ -4,6 +4,8 @@ import copy
 import hashlib
 import importlib.util
 from pathlib import Path
+import signal
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -335,3 +337,85 @@ def test_actual_performance_validation_uses_new_lock_and_candidate(driver, tmp_p
     driver.validate_performance(plan, {'trusted': 'scope'}, object())
     assert events == ['lock', 'prepare', 'performance', 'audit', 'restore', 'unlock']
     assert driver.read_json(tmp_path/'performance-proof.json')['status'] == 'passed'
+
+
+@pytest.mark.parametrize('signal_number', [signal.SIGINT, signal.SIGTERM])
+@pytest.mark.parametrize('boundary', ['cap_two', 'first_eos', 'decode_eos', 'no_active_case', 'only_terminal_decode'])
+def test_signal_injection_preserves_terminal_boundaries_and_targets_real_active_decode(
+        driver, tmp_path, monkeypatch, signal_number, boundary):
+    """Use the real Runner and real OS signal handlers with a CPU-only Backend."""
+    import kvolt_runtime.run_cli as cli
+    spec = importlib.util.spec_from_file_location('signal_runner_fixture', Path(__file__).with_name('test_session_runner.py'))
+    fixture = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fixture)
+    caps = [1,2,3,3] if boundary == 'cap_two' else [3,3,3]
+    if boundary in ('no_active_case', 'only_terminal_decode'):
+        caps = [1,2,3]
+    runner, _, options, backend, events, emitted, _ = fixture.setup(tmp_path, requests=len(caps))
+    fixture_manifest = {'schema_version': 'kvolt-request-manifest-v1', 'requests': [
+        {'request_id': f'request-{i}', 'prompt_file': 'prompt.txt', 'nmax': cap} for i, cap in enumerate(caps)]}
+    driver.write(tmp_path/'manifest.json', fixture_manifest)
+    prepared = fixture.preflight_inputs(prompt_file=None, manifest=tmp_path/'manifest.json',
+                                       tokenizer=fixture.Tokenizer(), repo=runner.repo)
+    runner.recorder.save_preflight(prepared)
+    current = {}
+    prefill, decode = backend.prefill_raw, backend.decode_one
+    def contextual_prefill(request):
+        current['id'] = request.request_id
+        backend.first = 128009 if ((boundary == 'first_eos' and request.request_id == 'request-0')
+            or (boundary == 'no_active_case' and request.request_id == 'request-2')) else 17
+        return prefill(request)
+    def contextual_decode(cache, previous):
+        token = decode(cache, previous)
+        terminal = ((boundary == 'decode_eos' and current['id'] == 'request-0')
+                    or (boundary == 'only_terminal_decode' and current['id'] == 'request-2'))
+        return fixture.TokenResult(128009, token.ready_ns, token.cache) if terminal else token
+    backend.prefill_raw, backend.decode_one = contextual_prefill, contextual_decode
+    real_factories = cli.RunFactories
+    monkeypatch.setattr(cli, 'RunFactories', lambda: real_factories(backend=lambda args, clock: backend))
+    def run_real_runner(args, *, lock, factories, emit):
+        assert factories.backend(args, fixture.Clock()) is backend
+        return runner.run(prepared, options)['exit_code']
+    monkeypatch.setattr(cli, 'run', run_real_runner)
+    monkeypatch.setitem(sys.modules, 'torch', SimpleNamespace(cuda=SimpleNamespace(empty_cache=lambda: None)))
+    actual_raise, signals = signal.raise_signal, []
+    def observed_raise(number):
+        signals.append((number, current['id']))
+        actual_raise(number)
+    monkeypatch.setattr(driver.signal, 'raise_signal', observed_raise)
+    previous_handler = signal.getsignal(signal_number)
+    signal.signal(signal_number, lambda received, frame: runner.stop.request(received))
+    plan = {'root': str(tmp_path), 'model_dir': '/unused-model', 'lut_dir': '/unused-lut',
+            'device_profile': '/unused-device', 'power_profile': '/unused-power', 'kivi_root': '/unused-kivi'}
+    try:
+        if boundary in ('no_active_case', 'only_terminal_decode'):
+            with pytest.raises(ValueError, match='no continuing Decode boundary'):
+                driver.run_session(plan, 'out', tmp_path/'manifest.json', lock=object(), signal_number=signal_number)
+            assert signals == []
+            session = driver.read_json(tmp_path/'out/session.json')
+            assert session['status'] == 'completed'
+            assert all(row['generation']['status'] == 'completed' for row in session['results'])
+            captured = driver.read_json(tmp_path/'out.stdout.json')
+            assert captured['exit_code'] == 0 and captured['signal_injection'] == {
+                'signal_number': int(signal_number), 'injected': False}
+        else:
+            session = driver.run_session(plan, 'out', tmp_path/'manifest.json', lock=object(), signal_number=signal_number)
+            target = 2 if boundary == 'cap_two' else 1
+            assert signals == [(signal_number, f'request-{target}')]
+            assert [row['generation']['status'] for row in session['results']] == (
+                ['completed']*target+['interrupted']+['not_run']*(len(caps)-target-1))
+            prefix = session['results'][target]
+            assert prefix['generation']['token_ids'] == [17,23]
+            assert prefix['generation']['initial_packs'] == prefix['generation']['decode_forwards'] == 1
+            assert prefix['generation']['final_cache_length'] == 1025
+            assert prefix['timing']['valid'] is False and prefix['energy']['valid'] is False
+            assert prefix['cleanup']['cache_released'] is True and prefix['cleanup']['gpu_restored'] is True
+            assert session['exit_code'] == 128+signal_number
+            captured = driver.read_json(tmp_path/'out.stdout.json')
+            assert captured['signal_injection'] == {'signal_number': int(signal_number), 'injected': True,
+                'request_id': f'request-{target}', 'output_tokens': 2, 'nmax': 3}
+            assert all(row['timing']['valid'] is True for row in session['results'][:target])
+            if boundary in ('first_eos', 'decode_eos'):
+                assert session['results'][0]['generation']['stop_reason'] == 'eos'
+    finally:
+        signal.signal(signal_number, previous_handler)

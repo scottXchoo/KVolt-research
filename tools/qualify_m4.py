@@ -335,25 +335,42 @@ def run_session(plan, name, manifest, *, lock, mode='development', qualification
     parsed = _parser().parse_args(argv)
     parsed._original = [sys.executable, '-m', 'kvolt_runtime', *argv]
     factories = RunFactories()
+    injection = None
     if signal_number:
+        from kvolt_runtime.config import EOS_TOKEN_IDS
         factory = factories.backend
+        injection = {'signal_number': int(signal_number), 'injected': False}
         def interrupted(args, clock):
             backend = factory(args, clock)
-            original = backend.decode_one
-            sent = False
+            original_prefill, original_decode = backend.prefill_raw, backend.decode_one
+            current = {}
+            def prefill(request):
+                token = original_prefill(request)
+                current.update(request=request, count=1)
+                return token
             def decode(cache, previous):
-                nonlocal sent
-                token = original(cache, previous)
-                if not sent:
-                    sent = True
+                token = original_decode(cache, previous)
+                current['count'] += 1
+                request = current['request']
+                # Preserve natural EOS/cap completion. A later request must
+                # provide an actual continuing Decode boundary for this check.
+                if (not injection['injected'] and token.token_id not in EOS_TOKEN_IDS
+                        and current['count'] < request.nmax):
+                    injection.update(injected=True, request_id=request.request_id,
+                                     output_tokens=current['count'], nmax=request.nmax)
                     signal.raise_signal(signal_number)
                 return token
-            backend.decode_one = decode
+            backend.prefill_raw, backend.decode_one = prefill, decode
             return backend
         factories = replace(factories, backend=interrupted)
     records = []
     code = run(parsed, lock=lock, factories=factories, emit=records.append)
-    write(Path(plan['root'])/(name+'.stdout.json'), {'argv': argv, 'exit_code': code, 'records': records})
+    captured = {'argv': argv, 'exit_code': code, 'records': records}
+    if injection is not None:
+        captured['signal_injection'] = injection
+    write(Path(plan['root'])/(name+'.stdout.json'), captured)
+    if signal_number:
+        require(injection['injected'], 'no continuing Decode boundary available for requested signal injection')
     require(code == (128+signal_number if signal_number else 0), 'actual CLI returned unexpected exit code')
     progress(name+' session ended with exit '+str(code))
     gc.collect()
