@@ -44,6 +44,7 @@ def _new_result(prepared, index):
             'generation': {'status': 'not_run', 'token_ids': [], 'token_ready_ns': [],
                            'n_output_tokens': 0, 'stop_reason': None,
                            'prefill_forwards': 0, 'initial_packs': 0, 'decode_forwards': 0,
+                           'stage_timing': {'initial_pack': None, 'first_decode': None},
                            'final_cache_length': None},
             'timing': {'status': 'not_run', 'valid': False, 'reason': 'not_run',
                        't0_ns': None, 't1_ns': None, 'tN_ns': None,
@@ -209,6 +210,7 @@ class SessionRunner:
         result = _new_result(item, index)
         generation, errors = result['generation'], result['errors']
         cache = collector = None
+        pc = dc = None
         t0 = None
         stage = 'request_preparation'
         result['attempt_started_ns'] = self.clock()
@@ -234,7 +236,6 @@ class SessionRunner:
                 stage = 'prefill_controller'
                 t0 = self.clock()
                 pc = self.pc.choose(item.spec.length, t0)
-                result['decisions']['prefill'] = asdict(pc)
                 self._interruption_boundary()
                 stage = 'prefill_frequency'
                 result['device']['prefill'] = self._verified_device_receipt(
@@ -255,9 +256,6 @@ class SessionRunner:
                     # no Q/LUT/clock work in that branch and no packing follows it.
                     stage = 'decode_controller'
                     dc = self.dc.choose(item.spec.length, item.spec.nmax, first.token_id, first.ready_ns)
-                    result['decisions']['decode'] = asdict(dc)
-                    if dc.knee is not None and dc.knee.status == 'error_recovered':
-                        result['events'].append({'kind': 'knee_error_recovered', **asdict(dc.knee)})
                     if stop is None:
                         if dc.status == 'skipped' or dc.selected is None:
                             raise ExecutionError('DC_CONTRACT', stage, 'active Decode has no selected setting')
@@ -269,11 +267,24 @@ class SessionRunner:
                                 self.device.apply(dc.selected.frequency_mhz), stage)
                             if not self.stop.requested:
                                 stage = 'initial_pack'
-                                self.backend.pack_initial(cache, dc.selected.group)
+                                pack_timing = {'start_ns': self.clock(), 'end_ns': None}
+                                generation['stage_timing']['initial_pack'] = pack_timing
+                                try:
+                                    self.backend.pack_initial(cache, dc.selected.group)
+                                finally:
+                                    pack_timing['end_ns'] = self.clock()
                                 generation['initial_packs'] = 1
                                 while stop is None and not self.stop.requested:
                                     stage = 'decode'
-                                    token = self.backend.decode_one(cache, generation['token_ids'][-1])
+                                    first_decode_timing = None
+                                    if generation['decode_forwards'] == 0:
+                                        first_decode_timing = {'start_ns': self.clock(), 'end_ns': None}
+                                        generation['stage_timing']['first_decode'] = first_decode_timing
+                                    try:
+                                        token = self.backend.decode_one(cache, generation['token_ids'][-1])
+                                    finally:
+                                        if first_decode_timing is not None:
+                                            first_decode_timing['end_ns'] = self.clock()
                                     self._check_token(token, cache, item.spec.length + len(generation['token_ids']),
                                                       generation['token_ready_ns'][-1])
                                     generation['decode_forwards'] += 1
@@ -293,6 +304,13 @@ class SessionRunner:
             generation['n_output_tokens'] = len(generation['token_ids'])
             completed = generation['status'] == 'completed'
             try:
+                # Preserve selected decisions even when generation fails, but
+                # build their nested evidence only after the last token boundary.
+                result['decisions']['prefill'] = asdict(pc) if pc is not None else None
+                result['decisions']['decode'] = asdict(dc) if dc is not None else None
+                if dc is not None and dc.knee is not None and dc.knee.status == 'error_recovered':
+                    result['events'].append({'kind': 'knee_error_recovered',
+                                             **result['decisions']['decode']['knee']})
                 if cache is not None and cache.format is not CacheFormat.RELEASED:
                     generation['final_cache_length'] = cache.metadata.length
                 result['timing'] = timing_metrics(t0, generation['token_ready_ns'], completed=completed)

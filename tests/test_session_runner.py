@@ -192,6 +192,85 @@ def test_first_token_stop_skips_real_dc_and_pack(tmp_path, nmax, first, reason):
     assert not any(isinstance(event, tuple) and event[0] == 'pack' for event in events)
     assert result['decisions']['decode']['skip_reason'] == reason
     assert result['timing']['mean_tpot_s'] is None
+    assert result['generation']['stage_timing'] == {'initial_pack': None, 'first_decode': None}
+
+
+def test_decision_serialization_follows_final_token_without_changing_measurements(tmp_path, monkeypatch):
+    import kvolt_runtime.execution.runner as runner_module
+    runner, prepared, options, backend, events, _, _ = setup(
+        tmp_path, knee=Adapter([], result=KneeResult('error_recovered', reason='test_recovery')))
+    original_asdict = runner_module.asdict
+    serialized = []
+    def serialize(decision):
+        # Model expensive evidence conversion with the same shared clock. Any
+        # conversion on the generation path would inflate the actual metrics.
+        serialized.append((type(decision).__name__, runner.clock.now, events.count('decode')))
+        runner.clock.now += 10_000_000_000
+        return original_asdict(decision)
+    monkeypatch.setattr(runner_module, 'asdict', serialize)
+    session = runner.run(prepared, options)
+    result = session['results'][0]
+    assert session['exit_code'] == 0
+    assert [name for name, _, _ in serialized] == ['PrefillDecision', 'DecodeDecision']
+    assert all(time >= result['timing']['tN_ns'] and n == 2 for _, time, n in serialized)
+    assert result['timing']['ttft_s'] < 1 and result['timing']['mean_tpot_s'] < 1
+    assert len(result['decisions']['prefill']['candidates']) == 8
+    assert len(result['decisions']['decode']['candidates']) == 40
+    assert result['events'] == [{'kind': 'knee_error_recovered', **result['decisions']['decode']['knee']}]
+    assert backend.caches[0].format is CacheFormat.RELEASED
+
+
+@pytest.mark.parametrize('failure', ['prefill', 'pack', 'decode'])
+def test_failed_generation_preserves_selected_decisions_and_stage_bounds(tmp_path, failure):
+    runner, prepared, options, _, _, _, _ = setup(tmp_path, fail=failure)
+    session = runner.run(prepared, options)
+    result = session['results'][0]
+    assert session['exit_code'] == 1 and result['generation']['status'] == 'failed'
+    assert len(result['decisions']['prefill']['candidates']) == 8
+    dc = result['decisions']['decode']
+    stages = result['generation']['stage_timing']
+    if failure == 'prefill':
+        assert dc is None and stages == {'initial_pack': None, 'first_decode': None}
+    else:
+        assert len(dc['candidates']) == 40 and dc['selected'] is not None
+        assert result['timing']['t1_ns'] <= stages['initial_pack']['start_ns']
+        assert stages['initial_pack']['start_ns'] < stages['initial_pack']['end_ns']
+        if failure == 'pack':
+            assert stages['first_decode'] is None
+        else:
+            assert stages['initial_pack']['end_ns'] < stages['first_decode']['start_ns']
+            assert stages['first_decode']['start_ns'] < stages['first_decode']['end_ns']
+            assert stages['first_decode']['end_ns'] <= result['failed_ns']
+    assert result['cleanup']['status'] == 'completed'
+
+
+@pytest.mark.parametrize('nmax', [2, 3])
+def test_stage_bounds_partition_existing_decode_interval(tmp_path, nmax):
+    runner, prepared, options, backend, _, _, _ = setup(tmp_path, nmax=nmax)
+    pack, decode = backend.pack_initial, backend.decode_one
+    calls = []
+    def measured_pack(cache, group):
+        calls.append(('pack', runner.clock.now))
+        pack(cache, group)
+    def measured_decode(cache, previous):
+        calls.append(('decode', runner.clock.now))
+        return decode(cache, previous)
+    backend.pack_initial, backend.decode_one = measured_pack, measured_decode
+    result = runner.run(prepared, options)['results'][0]
+    timing, stages = result['timing'], result['generation']['stage_timing']
+    pack, decode = stages['initial_pack'], stages['first_decode']
+    assert timing['t1_ns'] <= timing['td_ns'] < pack['start_ns']
+    assert pack['start_ns'] == calls[0][1] < pack['end_ns'] < decode['start_ns']
+    assert decode['start_ns'] == calls[1][1] < result['generation']['token_ready_ns'][1] < decode['end_ns']
+    if nmax == 2:
+        # Backend stamps readiness before returning, so the diagnostic wrapper
+        # can end just after tN without extending the token measurement end.
+        assert timing['tN_ns'] < decode['end_ns']
+    else:
+        assert decode['end_ns'] < result['generation']['token_ready_ns'][2] == timing['tN_ns']
+    assert timing['mean_tpot_s'] == (timing['tN_ns'] - timing['t1_ns']) / ((nmax - 1) * 1e9)
+    saved = json.loads((tmp_path / 'out/requests/000000/result.json').read_text())
+    assert saved['generation']['stage_timing'] == stages
 
 
 def test_knee_exception_recovered_and_cost_forces_latency_fallback(tmp_path):
@@ -242,8 +321,51 @@ def test_signal_stops_after_current_forward_preserves_prefix(tmp_path, stop_at, 
     assert first['generation']['status'] == 'interrupted' and first['generation']['n_output_tokens'] == n
     assert first['timing']['valid'] is False and first['timing']['prefix']['ttft_s'] is not None
     assert first['timing']['ttft_s'] is None and first['cleanup']['status'] == 'completed'
+    assert len(first['decisions']['prefill']['candidates']) == 8
+    stages = first['generation']['stage_timing']
+    if stop_at == 'prefill':
+        assert first['decisions']['decode'] is None
+        assert stages == {'initial_pack': None, 'first_decode': None}
+    else:
+        assert len(first['decisions']['decode']['candidates']) == 40
+        assert stages['initial_pack']['start_ns'] < stages['initial_pack']['end_ns']
+        assert stages['first_decode']['start_ns'] < stages['first_decode']['end_ns']
     assert session['results'][1]['generation']['status'] == 'not_run'
     assert events.count('decode') == n - 1
+
+
+def test_signal_inside_request_pack_preserves_decisions_and_skips_decode(tmp_path):
+    runner, prepared, options, backend, events, _, _ = setup(tmp_path)
+    pack = backend.pack_initial
+    def interrupted_pack(cache, group):
+        pack(cache, group)
+        runner.stop.request(2)
+    backend.pack_initial = interrupted_pack
+    session = runner.run(prepared, options)
+    result = session['results'][0]
+    assert session['exit_code'] == 130 and result['generation']['status'] == 'interrupted'
+    assert len(result['decisions']['decode']['candidates']) == 40
+    stages = result['generation']['stage_timing']
+    assert stages['initial_pack']['start_ns'] < stages['initial_pack']['end_ns']
+    assert stages['first_decode'] is None and 'decode' not in events
+    assert result['generation']['initial_packs'] == 1
+    assert result['cleanup']['status'] == 'completed'
+
+
+def test_interruption_before_pc_has_no_decision_or_stage_evidence(tmp_path):
+    runner, prepared, options, _, _, _, _ = setup(tmp_path)
+    prepare = runner.device.prepare_request
+    def interrupted_prepare():
+        receipt = prepare()
+        runner.stop.request(2)
+        return receipt
+    runner.device.prepare_request = interrupted_prepare
+    session = runner.run(prepared, options)
+    result = session['results'][0]
+    assert session['exit_code'] == 130 and result['generation']['status'] == 'interrupted'
+    assert result['decisions'] == {'prefill': None, 'decode': None}
+    assert result['generation']['stage_timing'] == {'initial_pack': None, 'first_decode': None}
+    assert result['cleanup']['status'] == 'completed'
 
 
 def test_device_rejection_precedes_model_and_returns_three(tmp_path):

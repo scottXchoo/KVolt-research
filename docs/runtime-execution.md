@@ -23,6 +23,19 @@ numerical paths or selection policy. M4 remains the formal qualification gate.
 * A normal output of N tokens has N-1 Decode forwards and final KV length
   L+N-1. The final token-ready timestamp fixes the measurement end. Cleanup and
   result serialization never move this boundary or add time/energy twice.
+* PC/DC selection stays inside the measured generation interval. Conversion of
+  their immutable decisions and recovered-Knee event evidence to result dicts
+  runs after generation ends, including failure/interruption paths, before
+  timing/SLO evaluation and recording. Selected candidates and skip metadata
+  are preserved without nested evidence serialization delaying GPU work.
+* Additive `generation.stage_timing.initial_pack` and `first_decode` diagnostics
+  each contain `start_ns` and `end_ns` from the shared monotonic clock around
+  the corresponding Backend call. `end_ns` is recorded even if the call fails;
+  a call never started is `null`. These spans partition existing execution
+  work; their durations are never added to token-based timing or energy.
+  Backend records readiness before returning, so a first Decode that produces
+  the final token can have a wrapper `end_ns` after `tN`; `tN` still ends the
+  normal measurement interval.
 * Generation, timing, energy and cleanup statuses remain separate. Valid normal
   measurements survive a later restoration failure. Technical execution errors
   abort the session; later requests are `not_run`; the CLI never retries.
