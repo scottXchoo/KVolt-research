@@ -1,4 +1,24 @@
-# M2 measured and synthetic LUT repositories
+# LUT lookup data and Runtime repositories
+
+## Latest default for LUT value lookups
+
+Use [`data/luts/latest/`](../data/luts/latest/) for future LUT value lookups:
+[`prefill.json`](../data/luts/latest/prefill.json),
+[`decode.json`](../data/luts/latest/decode.json) and
+[`quality.json`](../data/luts/latest/quality.json). These are the latest
+user-provided AGX1 compact tables, received on 2026-11-07 and preserved byte
+for byte. Their positional row contracts, grids, source documents, hashes and
+limits are recorded in [`data/luts/README.md`](../data/luts/README.md).
+Use the older AGX2 sealed bundle for explicitly requested historical
+reproduction, rather than as the default source of current LUT values.
+
+This lookup-data choice does not change the Runtime loader. The compact
+files lack the original export manifest and FP16 reference target curves in
+this checkout. `MeasuredLUTRepository` still uses the sealed bundle contract
+below and does not support these compact arrays. No Runtime accuracy, SLO or
+AGX2 qualification is established for the new AGX1 data by this data move.
+
+## Existing M2 sealed measured Runtime adapter
 
 `MeasuredLUTRepository(bundle_path)` loads the published AGX2 repeat5 bundle
 from source commit `d6cf87a60984aa167c5b5d72de354fd3d587c2d5`. Its

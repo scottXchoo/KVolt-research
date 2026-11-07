@@ -2,6 +2,18 @@
 
 이 지침은 `KVolt/`와 모든 하위 디렉터리에서 수행하는 프로젝트 작업에 적용한다. 사용자 요청과 상위 시스템·개발자 지침을 우선하며, 이 파일을 후속 작업의 기본 절차로 사용한다.
 
+## 최신 LUT 조회 기준
+
+사용자가 2026-11-07 제공한 아래 세 파일을 최신 LUT 값 조회의 기본 근거로 사용한다. 원본 수치와 파일 바이트를 보존한다.
+
+- Prefill: `data/luts/latest/prefill.json` — `[length, gpu_mhz, ttft_s, prefill_energy_j]`, 64셀.
+- Decode: `data/luts/latest/decode.json` — `[length, group, gpu_mhz, tpot_actual_s, epsilon_actual_j_per_token]`, 320셀.
+- Quality: `data/luts/latest/quality.json` — `[length, group, mean_score]`, 75셀.
+
+열 정의·단위·격자·출처·SHA-256은 `data/luts/README.md`를 확인한다. 향후 LUT 분석·수치 답변은 이 파일들을 우선 조회하며, 과거 실험 재현을 명시적으로 요청받은 경우에만 해당 과거 묶음을 사용한다. 형제 체크아웃 `KVolt-lut-source`의 AGX2 repeat5 묶음을 최신값으로 간주하지 않는다.
+
+이 세 파일은 AGX1 경량 배열 형식이다. 기존 `MeasuredLUTRepository`의 AGX2 봉인 묶음 계약과 구분한다. 원본 manifest와 FP16 목표 참조는 이 세 파일에 포함되지 않으므로, 최신 파일의 배치만으로 Runtime 로더 전환·장치 간 호환성·기존 적격성 검증의 승계를 주장하지 않는다.
+
 ## 1. 연구 문서 확인
 
 작업을 시작하기 전에 Notion의 **[연구] KVolt**와 해당 작업에 관련된 하위 문서를 읽는다. 기억이나 이 파일의 요약만으로 최신 요구사항을 대신하지 않는다.
