@@ -1,6 +1,7 @@
 """Feasibility arithmetic and policy-scope checks, without GPU dependencies."""
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -10,7 +11,9 @@ from tools import latest_tpot_audit as audit
 
 ROOT = Path(__file__).resolve().parents[1]
 LATEST = ROOT / 'data/luts/latest'
-REFERENCE = ROOT.parent / 'KVolt-lut-source/data/luts/agx2-repeat5-20261103'
+CONFIGURED_REFERENCE = os.environ.get('KVOLT_LUT_BUNDLE')
+REFERENCE = (Path(CONFIGURED_REFERENCE) if CONFIGURED_REFERENCE is not None else
+             ROOT.parent / 'KVolt-lut-source/data/luts/agx2-repeat5-20261103')
 
 
 class FixedKnee:
@@ -19,9 +22,18 @@ class FixedKnee:
 
 
 class LatestFeasibilityTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if CONFIGURED_REFERENCE is not None:
+            if not CONFIGURED_REFERENCE:
+                raise ValueError('KVOLT_LUT_BUNDLE must name a nonempty sealed reference path')
+            # An explicit reference is required evidence, never an optional skip.
+            # Validate bytes before the dependency-based real-policy skip too.
+            audit.load_repository(LATEST, REFERENCE)
+
     def test_complete_latest_grid_against_unchanged_targets(self):
         if not REFERENCE.is_dir():
-            self.skipTest('explicit sealed reference checkout unavailable')
+            self.skipTest('optional sealed reference checkout unavailable; set KVOLT_LUT_BUNDLE')
         report = audit.build_report(LATEST, REFERENCE, run_policy=False)
         self.assertEqual([r['all40']['time_feasible_count'] for r in report['lengths']],
                          [0, 0, 0, 0, 7, 10, 11, 12])
@@ -48,7 +60,7 @@ class LatestFeasibilityTests(unittest.TestCase):
 
     def test_policy_distinguishes_global_feasibility_from_knee_restriction(self):
         if not REFERENCE.is_dir():
-            self.skipTest('explicit sealed reference checkout unavailable')
+            self.skipTest('optional sealed reference checkout unavailable; set KVOLT_LUT_BUNDLE')
         repo = audit.load_repository(LATEST, REFERENCE)
         result = audit.policy_scenarios(repo, (0, 2_000_000), (2, 128, 512), knee_adapter=FixedKnee())
         self.assertEqual(len(result), 48)
@@ -68,7 +80,7 @@ class LatestFeasibilityTests(unittest.TestCase):
 
     def test_missing_pinned_policy_is_visible_and_never_synthetic_success(self):
         if not REFERENCE.is_dir():
-            self.skipTest('explicit sealed reference checkout unavailable')
+            self.skipTest('optional sealed reference checkout unavailable; set KVOLT_LUT_BUNDLE')
         from kvolt_runtime.policy.types import PolicyDependencyError
         with patch.object(audit, 'make_knee_adapter', side_effect=PolicyDependencyError('missing pins')):
             report = audit.build_report(LATEST, REFERENCE)
@@ -80,7 +92,7 @@ class LatestFeasibilityTests(unittest.TestCase):
     def test_real_pinned_policy_if_available(self):
         from kvolt_runtime.policy.types import PolicyDependencyError
         if not REFERENCE.is_dir():
-            self.skipTest('explicit sealed reference checkout unavailable')
+            self.skipTest('optional sealed reference checkout unavailable; set KVOLT_LUT_BUNDLE')
         try:
             audit.make_knee_adapter()
         except PolicyDependencyError as error:
@@ -96,7 +108,7 @@ class LatestFeasibilityTests(unittest.TestCase):
 
     def test_historical_bundle_cannot_be_mislabeled_latest(self):
         if not REFERENCE.is_dir():
-            self.skipTest('explicit sealed reference checkout unavailable')
+            self.skipTest('optional sealed reference checkout unavailable; set KVOLT_LUT_BUNDLE')
         with self.assertRaises(ValueError):
             audit.load_repository(REFERENCE, REFERENCE)
 
