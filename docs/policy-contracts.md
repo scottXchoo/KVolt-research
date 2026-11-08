@@ -25,8 +25,13 @@ diagnosis injects assumed times and marks them synthetic; later M3 passes the
 same host monotonic clock used by the Backend. There is no request-result cache
 that moves online interpolation or detection ahead of its phase boundary.
 
-Knee states follow current Method: found, not_found, error_recovered. Detected
-groups are sorted unique original G values. Empty/flat results use all G;
-invalid detector outputs recover to all G. Invalid LUT data remains an error.
+Knee states are found, not_found, error_recovered. Detected groups are sorted
+unique original G values. The 2026-11-08 user revision makes normal empty/flat
+`not_found` results activate only the median original G=32 from sorted
+`(8,16,32,64,128)`, preserving `not_found` and empty detected groups in the trace.
+Invalid detector outputs still recover to all G. A nonempty active time-eligible
+set uses the existing energy/tie rules; an empty one releases the active G
+restriction and uses the existing global 40-combination latency fallback. The
+40 candidate flags retain the original active/time filter. Invalid LUT data remains an error.
 Missing/wrong dependency versions fail adapter startup with
 PolicyDependencyError instead of masquerading as normal Knee detection.

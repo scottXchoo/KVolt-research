@@ -59,7 +59,9 @@ def test_full_trace_and_independent_argmin(fake_detector, capsys):
     assert dc['budget_s'] == dc['target_s'] - .002 / 511
     prefills = [c['prediction'] for c in pc['candidates'] if c['meets_budget']]
     assert pc['selected']['frequency_mhz'] == 510
-    assert dc['selected']['group'] == 128 and dc['selected']['frequency_mhz'] == 408
+    assert dc['selected']['group'] == 32 and dc['selected']['frequency_mhz'] == 408
+    assert dc['knee']['status'] == 'not_found' and dc['knee']['groups'] == []
+    assert all(c['active_knee'] == (c['prediction']['group'] == 32) for c in dc['candidates'])
     assert pc['selected'] == min(prefills, key=lambda p: (p['energy_j'], p['ttft_s'], p['frequency_mhz']))
     eligible = [c for c in dc['candidates'] if c['eligible']]
     expected = min(eligible, key=lambda c: (c['prediction']['energy_j_per_token'], -c['quality'], c['prediction']['tpot_s'], c['prediction']['group'], c['prediction']['frequency_mhz']))
@@ -214,7 +216,7 @@ def test_actual_cli_mock_scenarios(scenario):
         assert data['decode']['knee']['reason']=='flat_quality'
     if scenario=='exact_ties':
         assert data['prefill']['selected']['frequency_mhz']==408
-        assert data['decode']['selected']['group']==8
+        assert data['decode']['selected']['group']==32
         assert data['decode']['selected']['frequency_mhz']==408
 
 

@@ -67,7 +67,12 @@ class DecodeController:
         budget = target - (elapsed_ns / 1_000_000_000) / (nmax - 1)
 
         scores = {row.group: row.score for row in quality}
-        active = set(knee.groups) if knee.status == 'found' else set(GROUPS)
+        if knee.status == 'found':
+            active = set(knee.groups)
+        elif knee.status == 'not_found':
+            active = {sorted(GROUPS)[len(GROUPS) // 2]}
+        else:
+            active = set(GROUPS)
         eligible = tuple(row for row in predictions if row.group in active and row.tpot_s <= budget)
         if eligible:
             selected = min(eligible, key=lambda row: (
