@@ -54,6 +54,12 @@ class _TabulatedLUT:
         for name, values in [('Prefill target', prefill_target), ('Decode target', decode_target)]:
             _grid_keys(values, set(PERFORMANCE_LENGTHS), name)
         self._prefill = self._pairs(prefill, 'Prefill')
+        # Positive length interpolation preserves this order when it holds at
+        # every knot. Other valid tables retain the exact full-time scan path.
+        self._prefill_time_monotone = all(
+            self._prefill[(n, lower)][0] >= self._prefill[(n, upper)][0]
+            for n in PERFORMANCE_LENGTHS
+            for lower, upper in zip(FREQUENCIES_MHZ, FREQUENCIES_MHZ[1:]))
         self._decode = self._pairs(decode, 'Decode')
         self._quality = MappingProxyType({k: _number(v, 'mean_score', quality=True) for k, v in quality.items()})
         self._prefill_target = MappingProxyType({k: _number(v, 'Prefill target', positive=True) for k, v in prefill_target.items()})
@@ -90,6 +96,53 @@ class _TabulatedLUT:
     def prefill_latencies(self, length: int) -> tuple[PrefillLatencyPrediction, ...]:
         bracket = _bracket(length, PERFORMANCE_LENGTHS)
         return self._prefill_latencies_at(length, bracket)
+
+    def prefill_within_target(self, length: int, target_s: float) -> PrefillLookup:
+        """Return target-eligible details, or all fastest ties when none qualify.
+
+        Search TTFT only; interpolate energy only for the returned frequencies.
+        Boundary probes are reused, never exposed as full-detail candidates.
+        """
+        target = finite(target_s, 'Prefill target seconds', positive=True)
+        bracket = _bracket(length, PERFORMANCE_LENGTHS)
+        times = {}
+
+        def ttft(frequency_mhz):
+            if frequency_mhz not in times:
+                times[frequency_mhz] = _at(
+                    self._prefill[(bracket.lower, frequency_mhz)][0],
+                    self._prefill[(bracket.upper, frequency_mhz)][0], bracket)
+            return times[frequency_mhz]
+
+        if self._prefill_time_monotone:
+            # Descending frequency has nondecreasing TTFT, including exact ties.
+            ordered = FREQUENCIES_MHZ[::-1]
+
+            def prefix_end(limit):
+                lower, upper = 0, len(ordered)
+                while lower < upper:
+                    middle = (lower + upper) // 2
+                    if ttft(ordered[middle]) <= limit:
+                        lower = middle + 1
+                    else:
+                        upper = middle
+                return lower
+
+            end = prefix_end(target)
+            if end == 0:
+                end = prefix_end(ttft(ordered[0]))
+            frequencies = tuple(sorted(ordered[:end]))
+        else:
+            frequencies = tuple(f for f in FREQUENCIES_MHZ if ttft(f) <= target)
+            if not frequencies:
+                fastest = min(times.values())
+                frequencies = tuple(f for f in FREQUENCIES_MHZ if times[f] == fastest)
+
+        predictions = tuple(PrefillPrediction(
+            length, f, ttft(f), _at(self._prefill[(bracket.lower, f)][1],
+                                  self._prefill[(bracket.upper, f)][1], bracket), bracket)
+            for f in frequencies)
+        return PrefillLookup(length, predictions, target, bracket)
 
     def _prefill_latencies_at(self, length, bracket):
         return tuple(PrefillLatencyPrediction(

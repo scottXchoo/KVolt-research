@@ -17,26 +17,30 @@ Quality uses raw RULER mean_score in [0,1], never retention q. The raw metadata
 and source pins are retained in `LUTProvenance`; an adapter may not turn
 runtime_eligible=false into a declaration of formal Runtime qualification.
 
-PC queries its target and all eight TTFTs together with
-`prefill_lookup(L, latency_only=True)`. It reads an injected
-integer-nanosecond screening clock and queries detailed predictions only for
-the frequencies within the remaining budget, or global minimum-TTFT ties if
-none pass. A second clock after the detail lookup supplies the final budget;
-selection rechecks that budget. Both clock boundaries must be nondecreasing.
+PC queries `prefill_target(L)` first, validates the target, then reads its
+integer-nanosecond `prefilter_ns` clock. `prefill_within_target(L, target_s)`
+returns full details only for all `ttft_s <= target_s` candidates, or every exact
+global minimum-TTFT tie if none pass. PC validates the lookup and reads `tp_ns`.
+Its `budget_s` equals the target; elapsed control time remains measured but does
+not reduce eligibility. Both clock boundaries must be nondecreasing. This
+2026-11-08 user-directed rule replaces historical elapsed-budget PC selection.
 DC checks Nmax/first-EOS before lookup, then performs
 quality lookup, Knee detection, combined Decode predictions/target lookup,
 and its clock. Controllers revalidate combined wrapper type, requested length,
 finite positive target and nested bracket metadata; each row bracket must match
 the combined bracket. Malformed output is fatal without a separate-API fallback.
-Only then are budgets and candidates selected. Negative budgets stay negative.
+Only then are budgets and candidates selected. Negative DC budgets stay negative.
 Clock subtraction happens as integers before conversion to seconds. A clock
 moving backwards is a contract error, not a Knee recovery.
 
-Controllers return frozen decisions with every candidate, its eligibility,
-selection and reasons. PC retains all eight time predictions and uses
-`PrefillLatencyPrediction.energy_j=null` for rows whose energy was not queried.
-Queried rows and the selected row use full `PrefillPrediction` values.
-`prefilter_ns` records the screening boundary independently of final `tp_ns`.
+Controllers return frozen decisions with candidate eligibility, selection and
+reasons. PC records `selection_rule="target_ttft"` and only queried full
+`PrefillPrediction` rows; it does not emit latency-only placeholders. DC retains
+all 40 predictions. `prefilter_ns` records target validation independently of
+final `tp_ns`. The auditor checks the exact sparse PC set against a repository
+when available; without source evidence it checks only internal consistency.
+Historical PC traces without `selection_rule` retain full/partial-energy
+elapsed-budget auditing. Unknown rule markers are rejected.
 Missing source cells still fail full support validation before PC entry.
 PC and DC do not write files or device settings. CLI
 diagnosis injects assumed times and marks them synthetic; later M3 passes the

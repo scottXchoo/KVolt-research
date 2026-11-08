@@ -45,22 +45,29 @@ run. EOS takes precedence over Nmax=1. `--dc-elapsed-ns` may be omitted on skip;
 if supplied it is recorded as not applied. Full LUT support preflight still runs.
 An active DC without this time is rejected before source loading or lookup.
 
-After full-support preflight, PC performs its online lookups before reading the
-injected clock, with t0=0 and tp equal to the assumed PC elapsed ns. Active DC
+After full-support preflight, PC first queries the FP16 target, reads its
+injected screening clock, then queries target-eligible Prefill details and reads
+the completed-lookup clock. With t0=0, both injected readings equal the assumed
+PC elapsed ns. `selection_rule=target_ttft` uses the target itself as `budget_s`:
+PC elapsed time is recorded without subtracting it from the candidate threshold.
+PC chooses minimum raw energy among predictions with TTFT at most that target,
+or uses the existing fastest-TTFT fallback when none qualify. Active DC still
 performs Quality, Kneedle, Decode and target queries before its injected clock,
-with t1=0 and td equal to the assumed DC elapsed ns. These are separate synthetic
-phase origins, not a request timeline. Budgets use the controllers' unchanged
-binary64 arithmetic and original candidate/energy/tie policies. No time is
-measured by this diagnostic and no value is rounded before selection.
+with t1=0 and td equal to the assumed DC elapsed ns, and subtracts its amortized
+elapsed time from the Decode target. These are separate synthetic phase origins,
+not a request timeline. No time is measured by this diagnostic and no value is
+rounded before selection.
 
 Each successful invocation prints one JSON record to stdout, even with
 `--output`. The schema is `kvolt.policy_diagnostic.v1`, record type
 `policy_diagnostic`, with `synthetic_assumptions=true`, `predictions_only=true`
 and `measurements=null`. Source kind (`measured` or `synthetic`) is independent
-of these synthetic timing/token assumptions. `prefill` preserves eight candidate
-records; active `decode` preserves five raw Quality rows, Knee result/reasons,
+of these synthetic timing/token assumptions. `prefill` records only the detailed
+target-eligible candidates, or all global fastest TTFT ties for a fallback;
+active `decode` preserves five raw Quality rows, Knee result/reasons,
 40 candidate records, target, budget, selected prediction, flags and reasons.
-The target/budget fields are the Method's tau_p/Bp and tau_d/Bd. A skipped DC
+PC's target and budget are equal under the target-threshold policy; historical
+PC records used the Method's elapsed-time-adjusted Bp. DC retains tau_d/Bd. A skipped DC
 retains null target/budget/elapsed/td/selection/Knee/feasibility and empty rows.
 Prediction feasibility is not an observed TTFT/TPOT SLO result.
 

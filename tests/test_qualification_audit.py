@@ -141,6 +141,97 @@ def test_audit_partial_prefill_checks_queried_and_time_only_rows_against_reposit
             audit_policy(result, repository)
 
 
+def target_prefill_result(*, fallback=False):
+    result = partial_prefill_result()
+    pc = result['decisions']['prefill']
+    pc.update(selection_rule='target_ttft', budget_s=1.0, t0_ns=result['timing']['t0_ns'],
+              predicted_feasible=not fallback)
+    rows = [record['prediction'] for record in pc['candidates']][1:3]
+    if fallback:
+        for row in rows:
+            row['ttft_s'] = 1.5
+    pc['selected'] = rows[1]
+    pc['selection_path'] = 'latency_fallback' if fallback else 'energy_min'
+    pc['candidates'] = [dict(prediction=row, meets_budget=not fallback, selected=i == 1,
+        reasons=(['time_budget_exceeded'] if fallback else []) +
+                (['latency_fallback'] if fallback and i == 1 else ['not_selected'] if i == 0 else []))
+        for i, row in enumerate(rows)]
+    result['device']['prefill']['observed'] = dict.fromkeys(('min_hz', 'max_hz', 'cur_hz'), 612000000)
+    return result
+
+
+@pytest.mark.parametrize('fallback', [False, True])
+def test_audit_target_prefill_accepts_sparse_trace_without_elapsed_subtraction(fallback):
+    result = target_prefill_result(fallback=fallback)
+    audit_policy(result)
+
+
+@pytest.mark.parametrize('mutation', ['unknown_rule', 'null_rule', 'missing_row_energy', 'nan_time',
+    'missing_prediction_field', 'invalid_bracket', 'mixed_candidates', 'unequal_fallback',
+    'wrong_budget', 'boolean_budget', 'duplicate', 'empty', 'missing_clock', 'boolean_clock', 'elapsed',
+    'missing_length', 'missing_prediction', 'foreign_candidate',
+    'selected_flag', 'budget_flag', 'reasons', 'feasibility', 'wrong_winner', 'wrong_branch',
+    'boolean_selected_metric'])
+def test_audit_target_prefill_rejects_malformed_evidence(mutation):
+    result = target_prefill_result(fallback=mutation == 'unequal_fallback')
+    pc = result['decisions']['prefill']
+    row = pc['candidates'][0]['prediction']
+    if mutation == 'unknown_rule': pc['selection_rule'] = 'future_rule'
+    elif mutation == 'null_rule': pc['selection_rule'] = None
+    elif mutation == 'missing_row_energy': row['energy_j'] = None
+    elif mutation == 'nan_time': row['ttft_s'] = float('nan')
+    elif mutation == 'missing_prediction_field': del row['energy_j']
+    elif mutation == 'invalid_bracket': row['bracket']['weight'] = True
+    elif mutation == 'mixed_candidates': row['ttft_s'] = 2.0
+    elif mutation == 'unequal_fallback': row['ttft_s'] = 1.6
+    elif mutation == 'wrong_budget': pc['budget_s'] -= .6
+    elif mutation == 'boolean_budget': pc['budget_s'] = True
+    elif mutation == 'missing_length': del row['length']
+    elif mutation == 'missing_prediction': del pc['candidates'][0]['prediction']
+    elif mutation == 'foreign_candidate': pc['candidates'][0] = None
+    elif mutation == 'duplicate': pc['candidates'].append(copy.deepcopy(pc['candidates'][0]))
+    elif mutation == 'empty': pc['candidates'] = []
+    elif mutation == 'missing_clock': del pc['prefilter_ns']
+    elif mutation == 'boolean_clock': pc['prefilter_ns'] = True
+    elif mutation == 'elapsed': pc['elapsed_ns'] += 1
+    elif mutation == 'selected_flag': pc['candidates'][0]['selected'] = True
+    elif mutation == 'budget_flag': pc['candidates'][0]['meets_budget'] = False
+    elif mutation == 'reasons': pc['candidates'][0]['reasons'] = []
+    elif mutation == 'feasibility': pc['predicted_feasible'] = False
+    elif mutation == 'boolean_selected_metric':
+        pc['candidates'][1]['prediction']['energy_j'] = 1.0
+        pc['selected'] = copy.deepcopy(pc['selected'])
+        pc['selected']['energy_j'] = True
+    elif mutation == 'wrong_winner': pc['selected'] = row
+    elif mutation == 'wrong_branch': pc['selection_path'] = 'latency_fallback'
+    with pytest.raises(ValueError):
+        audit_policy(result)
+
+
+@pytest.mark.parametrize('fallback', [False, True])
+@pytest.mark.parametrize('mutation', [None, 'omitted', 'energy', 'time', 'target'])
+def test_audit_target_prefill_checks_exact_filtered_set_against_repository(fallback, mutation):
+    from kvolt_runtime.policy.mock import MockLUTRepository
+    from kvolt_runtime.policy.types import FREQUENCIES_MHZ, PERFORMANCE_LENGTHS
+
+    result = target_prefill_result(fallback=fallback)
+    pc = result['decisions']['prefill']
+    cells = {f: (2.0, 1.0) for f in FREQUENCIES_MHZ}
+    cells.update({510: (1.5 if fallback else .4, 5.0), 612: (1.5 if fallback else .5, 2.0)})
+    repository = MockLUTRepository(
+        prefill={(n, f): cells[f] for n in PERFORMANCE_LENGTHS for f in FREQUENCIES_MHZ},
+        prefill_target={n: 1.0 for n in PERFORMANCE_LENGTHS})
+    if mutation == 'omitted': pc['candidates'] = pc['candidates'][1:]
+    elif mutation == 'energy': pc['candidates'][0]['prediction']['energy_j'] = 6
+    elif mutation == 'time': pc['candidates'][0]['prediction']['ttft_s'] = 1.6 if fallback else .3
+    elif mutation == 'target': pc['target_s'] = pc['budget_s'] = 1.1
+    if mutation is None:
+        audit_policy(result, repository)
+    else:
+        with pytest.raises(ValueError, match='sealed LUT|candidate evidence'):
+            audit_policy(result, repository)
+
+
 @pytest.fixture
 def session_bundle(tmp_path):
     def write(relative, value):

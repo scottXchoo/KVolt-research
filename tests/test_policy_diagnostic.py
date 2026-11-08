@@ -52,20 +52,22 @@ def test_full_trace_and_independent_argmin(fake_detector, capsys):
     assert data['measurements'] is None
     assert data['source']['kind'] == 'synthetic'
     pc, dc = data['prefill'], data['decode']
-    assert len(pc['candidates']) == 8 and len(dc['candidates']) == 40
+    assert 0 < len(pc['candidates']) <= 8 and len(dc['candidates']) == 40
     assert len(dc['quality']) == 5
     assert pc['elapsed_ns'] == 1000000 and dc['elapsed_ns'] == 2000000
     assert pc['prefilter_ns'] == pc['tp_ns'] == 1000000
-    assert pc['budget_s'] == pc['target_s'] - .001
+    assert pc['budget_s'] == pc['target_s']
+    assert pc['selection_rule'] == 'target_ttft'
     assert dc['budget_s'] == dc['target_s'] - .002 / 511
     prefills = [c['prediction'] for c in pc['candidates'] if c['meets_budget']]
-    assert pc['selected']['frequency_mhz'] == 510
+    assert pc['selected']['frequency_mhz'] == 408
     assert dc['selected']['group'] == 32 and dc['selected']['frequency_mhz'] == 408
     assert dc['knee']['status'] == 'not_found' and dc['knee']['groups'] == []
     assert all(c['active_knee'] == (c['prediction']['group'] == 32) for c in dc['candidates'])
     assert pc['selected'] == min(prefills, key=lambda p: (p['energy_j'], p['ttft_s'], p['frequency_mhz']))
     rejected = [c for c in pc['candidates'] if not c['meets_budget']]
-    assert rejected and all(c['prediction']['energy_j'] is None for c in rejected)
+    assert not rejected
+    assert all(c['prediction']['energy_j'] is not None for c in pc['candidates'])
     eligible = [c for c in dc['candidates'] if c['eligible']]
     expected = min(eligible, key=lambda c: (c['prediction']['energy_j_per_token'], -c['quality'], c['prediction']['tpot_s'], c['prediction']['group'], c['prediction']['frequency_mhz']))
     assert dc['selected'] == expected['prediction']
@@ -86,14 +88,15 @@ def test_skip_without_detector_quality_decode_or_clock(monkeypatch, capsys, flag
         def prefill(self, length):
             pytest.fail('online full-details Prefill lookup')
         def prefill_lookup(self, length, *, latency_only=False):
-            assert latency_only is True
-            events.append('prefill_lookup'); return super().prefill_lookup(length, latency_only=True)
+            pytest.fail('online all-frequency Prefill lookup')
+        def prefill_within_target(self, length, target):
+            events.append('prefill_within_target'); return super().prefill_within_target(length, target)
         def prefill_latencies(self, length):
             pytest.fail('online separate Prefill latency lookup')
         def prefill_candidates(self, length, frequencies):
-            events.append('prefill_candidates'); return super().prefill_candidates(length, frequencies)
+            pytest.fail('online separate detail query')
         def prefill_target(self, length):
-            pytest.fail('online separate Prefill target lookup')
+            events.append('prefill_target'); return super().prefill_target(length)
         def quality(self, length):
             pytest.fail('quality on skip')
         def decode(self, length):
@@ -106,7 +109,7 @@ def test_skip_without_detector_quality_decode_or_clock(monkeypatch, capsys, flag
     monkeypatch.setattr(cli, '_new_knee_adapter', lambda: pytest.fail('detector initialization on skip'))
     assert cli.main(arguments(*flags)) == 0
     data = report(capsys)
-    assert events == ['preflight','prefill_lookup','prefill_candidates']
+    assert events == ['preflight','prefill_target','prefill_within_target']
     dc = data['decode']
     assert dc['status'] == 'skipped' and dc['skip_reason'] == reason
     for key in ('selected','target_s','budget_s','elapsed_ns','td_ns','knee','predicted_feasible'):
@@ -254,7 +257,7 @@ def test_actual_cli_measured_bundle():
     assert data['source']['metadata']['quality']['runtime_validation_required'] is True
     assert 'entries' not in data['source']['metadata']['quality']
     assert data['measurements'] is None and data['synthetic_assumptions']
-    assert len(data['prefill']['candidates'])==8 and len(data['decode']['candidates'])==40
+    assert 0 < len(data['prefill']['candidates'])<=8 and len(data['decode']['candidates'])==40
 
 
 def test_online_order_and_assumed_clock_boundaries(monkeypatch,capsys):
@@ -265,14 +268,15 @@ def test_online_order_and_assumed_clock_boundaries(monkeypatch,capsys):
         def prefill(self,L):
             pytest.fail('online full-details Prefill lookup')
         def prefill_lookup(self,L,*,latency_only=False):
-            assert latency_only is True
-            events.append('prefill_lookup'); return super().prefill_lookup(L,latency_only=True)
+            pytest.fail('online all-frequency Prefill lookup')
+        def prefill_within_target(self,L,target):
+            events.append('prefill_within_target'); return super().prefill_within_target(L,target)
         def prefill_latencies(self,L):
             pytest.fail('online separate Prefill latency lookup')
         def prefill_candidates(self,L,frequencies):
-            events.append('prefill_candidates'); return super().prefill_candidates(L,frequencies)
+            pytest.fail('online separate detail query')
         def prefill_target(self,L):
-            pytest.fail('online separate Prefill target lookup')
+            events.append('prefill_target'); return super().prefill_target(L)
         def quality(self,L):
             events.append('quality'); return super().quality(L)
         def decode_lookup(self,L):
@@ -288,7 +292,7 @@ def test_online_order_and_assumed_clock_boundaries(monkeypatch,capsys):
     monkeypatch.setattr(cli,'_new_knee_adapter',lambda: Detector())
     assert cli.main(arguments())==0
     data=report(capsys)
-    assert events==['preflight','prefill_lookup','prefill_candidates',
+    assert events==['preflight','prefill_target','prefill_within_target',
                     'quality','detect','decode_lookup']
     assert data['prefill']['t0_ns']==0 and data['prefill']['tp_ns']==1000000
     assert data['decode']['t1_ns']==0 and data['decode']['td_ns']==2000000
@@ -323,10 +327,14 @@ def test_skip_can_omit_dc_time(capsys,flags):
     assert data['decode']['elapsed_ns'] is None
 
 
-def test_negative_budgets_keep_full_trace(fake_detector,capsys):
+def test_large_elapsed_keeps_pc_target_and_negative_dc_budget(fake_detector,capsys):
     assert cli.main(arguments('--pc-elapsed-ns','1000000000000','--dc-elapsed-ns','1000000000000'))==0
     data=report(capsys)
-    for phase in ('prefill','decode'):
+    pc = data['prefill']
+    assert pc['budget_s'] == pc['target_s'] > 0
+    assert pc['selection_path'] == 'energy_min' and pc['predicted_feasible'] is True
+    assert pc['selected']['frequency_mhz'] == 408
+    for phase in ('decode',):
         decision=data[phase]
         assert decision['budget_s']<0
         assert decision['selection_path']=='latency_fallback'

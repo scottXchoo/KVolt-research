@@ -78,23 +78,30 @@ is validated at construction. `preflight(L)` validates integer length support
 without calling online lookup, interpolation or detection. Full support is
 required even when a later controller skips Decode for Nmax=1 or first EOS.
 
-Online controllers use `prefill_lookup(L, latency_only=True)` and
-`decode_lookup(L)`. Their frozen `PrefillLookup`/`DecodeLookup` results contain
-`length`, immutable `predictions`, `target_s` and `bracket`. Each combined query
-computes the performance-length bracket once and reuses it for both predictions
-and the frozen Reference target. `prefill_lookup(L)` defaults to all eight full
-Prefill predictions; latency-only mode returns all eight TTFTs without energy.
-`decode_lookup(L)` returns all 40 predictions and the Decode target. Quality
-remains a separate `quality(L)` query before Knee detection.
+Online PC first calls `prefill_target(L)`, then
+`prefill_within_target(L, target_s)`. The latter returns a frozen `PrefillLookup`
+with `length`, immutable full-detail `predictions`, the supplied `target_s` and
+a shared `bracket`. It returns every `ttft_s <= target_s` row, or all global
+minimum-TTFT exact ties when none pass. Energy is interpolated only for returned
+rows. Tables validated as nonincreasing in TTFT across frequency at every knot
+use binary boundary search; valid nonmonotonic tables use exact scanning. TTFT
+probes are reused within the query. PC's recorded elapsed time does not reduce
+the target threshold.
 
-Compatibility methods `prefill(L)`, `decode(L)`, `prefill_target(L)`,
-`decode_target(L)` and `prefill_latencies(L)` retain their existing results.
-Prefill also exposes `prefill_candidates(L, frequencies)`, which returns details only for the
-requested immutable tuple of unique original frequencies. Detail results are
-sorted by frequency; an empty tuple returns no rows. `prefill(L)` retains its
-full-eight-row contract for offline consumers. All measured, compact and mock
-repositories share these methods. See [PC order and budgets](policy-prefill.md)
-for combined target/TTFT screening and the fallback exception. Predictions are
+Online DC continues to use `decode_lookup(L)`: its frozen `DecodeLookup` contains
+all 40 predictions and the target, sharing one performance-length bracket.
+Quality remains a separate `quality(L)` query before Knee detection.
+
+Compatibility methods `prefill_lookup(L, latency_only=False)`, `prefill(L)`,
+`decode(L)`, `prefill_target(L)`, `decode_target(L)` and `prefill_latencies(L)`
+retain their existing results. The combined Prefill lookup defaults to all eight
+full predictions; latency-only mode returns all eight TTFTs without energy.
+`prefill_candidates(L, frequencies)` returns details for the requested immutable
+tuple of unique original frequencies, sorted by frequency; an empty tuple returns
+no rows. `prefill(L)` retains its full-eight-row contract for offline consumers
+and source-backed audits. All measured, compact and mock repositories share
+these methods. See [PC order and targets](policy-prefill.md) for current
+selection, sparse trace and historical audit semantics. Predictions are
 immutable and retain the request length,
 original candidate and `Bracket(lower, upper, weight)`. Exact knots return the
 original Python binary64 value directly; intermediate values use

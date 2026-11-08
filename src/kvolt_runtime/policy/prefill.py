@@ -4,40 +4,46 @@ import time
 from ..config import require_int
 from ..errors import ContractError
 from .types import (
-    Bracket, FREQUENCIES_MHZ, LUTRepository, PrefillCandidate, PrefillDecision,
-    PrefillLatencyPrediction, PrefillLookup, PrefillPrediction, elapsed_since,
-    length as validate_length,
+    Bracket, LUTRepository, PrefillCandidate, PrefillDecision, PrefillLookup,
+    PrefillPrediction, elapsed_since, finite, length as validate_length,
 )
 
 
-def _validate_prefill(predictions, requested_length, frequencies, *, latency_only=False):
-    if type(predictions) is not tuple or len(predictions) != len(frequencies):
-        raise ContractError('Prefill LUT must return an immutable tuple of the requested frequencies')
-    prediction_type = PrefillLatencyPrediction if latency_only else PrefillPrediction
+def _validate_lookup(lookup, requested_length, target):
+    if not isinstance(lookup, PrefillLookup):
+        raise ContractError('Prefill LUT must return PrefillLookup')
+    if not isinstance(lookup.bracket, Bracket):
+        raise ContractError('Prefill lookup requires an interpolation bracket')
+    bracket = Bracket(lookup.bracket.lower, lookup.bracket.upper, lookup.bracket.weight)
+    # Revalidate even frozen dataclasses supplied by a foreign repository.
+    lookup = PrefillLookup(lookup.length, lookup.predictions, lookup.target_s, bracket)
+    if lookup.length != requested_length or lookup.target_s != target:
+        raise ContractError('Prefill lookup must match requested L and target')
+    if not lookup.predictions:
+        raise ContractError('Prefill filtered lookup must contain candidates or fastest ties')
     normalized = []
-    for row in predictions:
-        if not isinstance(row, prediction_type):
-            raise ContractError(f'Prefill LUT must return {prediction_type.__name__} rows')
+    for row in lookup.predictions:
+        if not isinstance(row, PrefillPrediction):
+            raise ContractError('Prefill filtered LUT must return PrefillPrediction rows')
         if not isinstance(row.bracket, Bracket):
             raise ContractError('Prefill prediction requires an interpolation bracket')
-        # Revalidate even frozen dataclasses supplied by a foreign repository.
-        bracket = Bracket(row.bracket.lower, row.bracket.upper, row.bracket.weight)
-        if latency_only:
-            prediction = PrefillLatencyPrediction(
-                row.length, row.frequency_mhz, row.ttft_s, bracket, row.energy_j)
-        else:
-            prediction = PrefillPrediction(
-                row.length, row.frequency_mhz, row.ttft_s, row.energy_j, bracket)
-        if row.length != requested_length:
-            raise ContractError('Prefill LUT rows must match requested L')
+        row_bracket = Bracket(row.bracket.lower, row.bracket.upper, row.bracket.weight)
+        prediction = PrefillPrediction(row.length, row.frequency_mhz, row.ttft_s, row.energy_j, row_bracket)
+        if prediction.length != requested_length or prediction.bracket != bracket:
+            raise ContractError('Prefill rows must match requested L and lookup interpolation bracket')
         normalized.append(prediction)
-    if {row.frequency_mhz for row in normalized} != set(frequencies):
-        raise ContractError('Prefill LUT must contain every requested frequency exactly once')
+    if len({row.frequency_mhz for row in normalized}) != len(normalized):
+        raise ContractError('Prefill filtered LUT must contain unique frequencies')
+    feasible = [row for row in normalized if row.ttft_s <= target]
+    if feasible and len(feasible) != len(normalized):
+        raise ContractError('Prefill filtered LUT mixed passing and rejected candidates')
+    if not feasible and len({row.ttft_s for row in normalized}) != 1:
+        raise ContractError('Prefill fallback LUT must contain only minimum-TTFT exact ties')
     return tuple(sorted(normalized, key=lambda row: row.frequency_mhz))
 
 
 class PrefillController:
-    """Query target and all TTFTs together before budget-eligible details.
+    """Query the target first, then minimize raw energy within that target.
 
     The M3 caller performs full-support preflight before entering this phase.
     This controller does no device/file work or request-result caching.
@@ -50,56 +56,26 @@ class PrefillController:
     def choose(self, length: int, t0_ns: int) -> PrefillDecision:
         validate_length(length)
         require_int(t0_ns, 'Prefill start ns', 0)
-
-        lookup = self.repo.prefill_lookup(length, latency_only=True)
-        if not isinstance(lookup, PrefillLookup):
-            raise ContractError('Prefill LUT must return PrefillLookup')
-        if not isinstance(lookup.bracket, Bracket):
-            raise ContractError('Prefill lookup requires an interpolation bracket')
-        bracket = Bracket(lookup.bracket.lower, lookup.bracket.upper, lookup.bracket.weight)
-        lookup = PrefillLookup(lookup.length, lookup.predictions, lookup.target_s, bracket)
-        if lookup.length != length:
-            raise ContractError('Prefill lookup must match requested L')
-        target = lookup.target_s
-        latencies = _validate_prefill(
-            lookup.predictions, length, FREQUENCIES_MHZ, latency_only=True)
-        if any(row.bracket != bracket for row in latencies):
-            raise ContractError('Prefill rows must match the lookup interpolation bracket')
+        target = finite(self.repo.prefill_target(length), 'Prefill target seconds', positive=True)
         prefilter_ns = self.clock()
-        prefilter_elapsed_ns = elapsed_since(t0_ns, prefilter_ns)
-        prefilter_budget = target - prefilter_elapsed_ns / 1_000_000_000
-        shortlist = tuple(row.frequency_mhz for row in latencies if row.ttft_s <= prefilter_budget)
-        if not shortlist:
-            fastest = min(row.ttft_s for row in latencies)
-            shortlist = tuple(row.frequency_mhz for row in latencies if row.ttft_s == fastest)
-
-        predictions = _validate_prefill(
-            self.repo.prefill_candidates(length, shortlist), length, shortlist)
-        latency_by_frequency = {row.frequency_mhz: row for row in latencies}
-        for row in predictions:
-            prior = latency_by_frequency[row.frequency_mhz]
-            if row.ttft_s != prior.ttft_s or row.bracket != prior.bracket:
-                raise ContractError('Prefill details must match the prior TTFT and interpolation bracket')
+        elapsed_since(t0_ns, prefilter_ns)
+        predictions = _validate_lookup(self.repo.prefill_within_target(length, target), length, target)
         tp_ns = self.clock()
         elapsed_since(prefilter_ns, tp_ns)
         elapsed_ns = elapsed_since(t0_ns, tp_ns)
-        budget = target - elapsed_ns / 1_000_000_000
 
-        feasible = tuple(row for row in predictions if row.ttft_s <= budget)
+        feasible = tuple(row for row in predictions if row.ttft_s <= target)
         if feasible:
             selected = min(feasible, key=lambda row: (row.energy_j, row.ttft_s, row.frequency_mhz))
             selection_path = 'energy_min'
         else:
-            # Every global fastest tie is in any nonempty time prefix, or
-            # explicitly fetched when the initial time prefix was empty.
+            # The repository returns every global minimum-TTFT exact tie.
             selected = min(predictions, key=lambda row: (row.ttft_s, row.energy_j, row.frequency_mhz))
             selection_path = 'latency_fallback'
 
         candidates = []
-        detail_by_frequency = {row.frequency_mhz: row for row in predictions}
-        for latency in latencies:
-            row = detail_by_frequency.get(latency.frequency_mhz, latency)
-            meets_budget = row.ttft_s <= budget
+        for row in predictions:
+            meets_budget = row.ttft_s <= target
             is_selected = row is selected
             reasons = []
             if not meets_budget:
@@ -111,7 +87,8 @@ class PrefillController:
             candidates.append(PrefillCandidate(row, meets_budget, is_selected, tuple(reasons)))
 
         return PrefillDecision(
-            length=length, selected=selected, target_s=target, budget_s=budget,
+            length=length, selected=selected, target_s=target, budget_s=target,
             elapsed_ns=elapsed_ns, selection_path=selection_path,
-            predicted_feasible=selected.ttft_s <= budget, candidates=tuple(candidates),
-            t0_ns=t0_ns, tp_ns=tp_ns, prefilter_ns=prefilter_ns)
+            predicted_feasible=selected.ttft_s <= target, candidates=tuple(candidates),
+            t0_ns=t0_ns, tp_ns=tp_ns, prefilter_ns=prefilter_ns,
+            selection_rule='target_ttft')
