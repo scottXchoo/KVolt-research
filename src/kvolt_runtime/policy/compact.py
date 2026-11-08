@@ -200,10 +200,17 @@ class CompactLUTRepository(_TabulatedLUT):
 
 
 def load_lut_repository(path, *, reference_lut_dir=None):
-    """Select one recognized distribution; compact arrays require explicit targets."""
+    """Load a canonical selection, or a versioned export with explicit targets."""
     root = Path(path)
     sealed = (root / 'bundle-manifest.json').exists()
     compact = any((root / name).exists() for name in ('manifest.json', 'prefill.json', 'decode.json', 'quality.json'))
+    if (root / 'selection.json').exists():
+        if sealed or compact:
+            raise LUTError('ambiguous LUT directory contains selection and distribution formats')
+        if reference_lut_dir is not None:
+            raise LUTError('--reference-lut-dir cannot override a LUT selection; select an explicit compact export')
+        from .selection import load_current_lut_repository
+        return load_current_lut_repository(root / 'selection.json')
     if sealed and compact:
         raise LUTError('ambiguous LUT directory contains sealed and compact formats')
     if compact:

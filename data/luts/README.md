@@ -1,9 +1,24 @@
 # Latest LUT lookup data
 
-Use [`agx2-runtime-repeat5/`](agx2-runtime-repeat5/) as the default for LUT
-value lookups. The user supplied this four-file bundle on 2026-11-08. Its
+Use [`current/selection.json`](current/selection.json) as KVolt's fixed default
+LUT entry point. `kvolt run` and `kvolt diagnose` read it automatically when
+`--lut-dir`/`--lut-bundle` and `--mock` are omitted, independently of the working
+directory in a source checkout. Installed packages without these data files
+fail explicitly; provide a source directory override in that case. It selects
+[`agx2-runtime-repeat5/`](agx2-runtime-repeat5/) for
+predictions and [`agx2-reference-repeat10/`](agx2-reference-repeat10/) for FP16
+targets. The user supplied the runtime four-file bundle on 2026-11-08. Its
 original bytes are tracked without modification. The directory named
 `latest/` below preserves the previous AGX1 export for explicit reproduction.
+
+The `kvolt.lut-selection.v1` selector records each sibling directory name and
+its manifest SHA-256. KVolt verifies these with the existing pinned loaders.
+Missing or invalid selections fail before tokenizer or hardware setup;
+there is no directory scan, mtime-based choice or Mock fallback. Original
+versioned bundles remain unchanged. Source metadata records the selector path,
+SHA-256 and selection alongside the actual runtime and target provenance.
+Selecting a bundle establishes no new accuracy, SLO, quality or formal
+qualification, and does not allow an old grant to authorize changed sources.
 
 ## Current AGX2 runtime bundle
 
@@ -73,7 +88,19 @@ cannot authorize a new export.
 `CompactLUTRepository` accepts only the two explicitly trusted prediction
 manifests. `--reference-lut-dir` accepts either pinned three/five/ten-repeat
 `CompactReferenceRepository` or the unchanged sealed AGX2
-`MeasuredLUTRepository` for historical reproduction. Current use:
+`MeasuredLUTRepository` for historical reproduction. Default use:
+
+```sh
+kvolt run ...
+kvolt diagnose --length 1024 --max-new-tokens 1 --pc-elapsed-ns 0
+```
+
+`--lut-dir data/luts/current` and `--lut-bundle data/luts/current` explicitly
+select the same entry point. A selector's reference cannot be overridden;
+select a versioned compact directory for a different reference instead.
+Explicit compact predictions still require `--reference-lut-dir`; a reference
+alone or with `--mock` is rejected. Use `--mock baseline` for explicit synthetic
+development. Versioned overrides and the audit tool remain available:
 
 ```sh
 kvolt run --lut-dir data/luts/agx2-runtime-repeat5 --reference-lut-dir data/luts/agx2-reference-repeat10 ...

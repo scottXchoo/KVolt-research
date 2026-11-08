@@ -22,11 +22,12 @@ def _parser():
     diagnose.add_argument('--pc-elapsed-ns', type=int, required=True, help='assumed nonnegative PC elapsed ns, not a measurement')
     diagnose.add_argument('--dc-elapsed-ns', type=int, help='assumed nonnegative DC elapsed ns; required when DC is active')
     diagnose.add_argument('--first-token-id', type=int, default=17, help='assumed first token ID, 0..128255 (default: 17); EOS skips DC')
-    source = diagnose.add_mutually_exclusive_group(required=True)
-    source.add_argument('--lut-bundle', type=Path, help='sealed measured bundle or pinned compact LUT directory; no Mock fallback')
+    source = diagnose.add_mutually_exclusive_group(required=False)
+    source.add_argument('--lut-bundle', type=Path,
+                        help='override data/luts/current/selection.json with a selection directory, sealed measured bundle or pinned compact LUT; no Mock fallback')
     source.add_argument('--mock', choices=SCENARIOS, help='explicit synthetic LUT scenario')
     diagnose.add_argument('--reference-lut-dir', type=Path,
-                          help='sealed AGX2 FP16 target bundle, explicitly required for compact LUTs')
+                          help='FP16 targets for explicit compact --lut-bundle; omit all source options to use data/luts/current/selection.json')
     diagnose.add_argument('--output', type=Path, help='also save the JSON to a new file; existing paths are refused')
     from .run_cli import configure_parser
     configure_parser(commands.add_parser('run', help='run sequential adaptive development requests'))
@@ -75,6 +76,9 @@ def _build_repository(args):
         return load_lut_repository(args.lut_bundle, reference_lut_dir=reference)
     if reference is not None:
         raise ValueError('--reference-lut-dir requires --lut-bundle; cannot combine with --mock')
+    if args.mock is None:
+        from .policy.selection import load_current_lut_repository
+        return load_current_lut_repository()
     from .policy.mock import MockLUTRepository
     return MockLUTRepository(args.mock)
 
@@ -167,7 +171,7 @@ def _diagnose(args, result):
         stage = 'preflight'
         repo.preflight(args.length)
         result['preflight'] = {'status': 'supported', 'scope': 'full_quality_prefill_decode_and_targets'}
-        expected_kind = 'measured' if args.lut_bundle is not None else 'synthetic'
+        expected_kind = 'synthetic' if args.mock is not None else 'measured'
         if repo.provenance.kind != expected_kind:
             raise ValueError('LUT provenance kind does not match the explicitly selected source')
         result['source'] = _source_metadata(repo.provenance)

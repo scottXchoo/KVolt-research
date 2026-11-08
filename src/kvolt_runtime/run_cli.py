@@ -32,11 +32,12 @@ def configure_parser(parser):
     inputs.add_argument('--prompt-file', type=Path, help='UTF-8 prompt; no template or truncation')
     inputs.add_argument('--manifest', type=Path, help='kvolt-request-manifest-v1 JSON')
     parser.add_argument('--model-dir', type=Path, required=True, help='fixed pinned model snapshot directory')
-    source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument('--lut-dir', type=Path, help='sealed measured bundle or pinned compact LUT directory; no synthetic fallback')
+    source = parser.add_mutually_exclusive_group(required=False)
+    source.add_argument('--lut-dir', type=Path,
+                        help='override data/luts/current/selection.json with a selection directory, sealed measured bundle or pinned compact LUT; no synthetic fallback')
     source.add_argument('--mock', choices=SCENARIOS, help='explicit synthetic LUT; development only')
     parser.add_argument('--reference-lut-dir', type=Path,
-                        help='sealed AGX2 FP16 target bundle, explicitly required for compact LUTs')
+                        help='FP16 targets for explicit compact --lut-dir; omit all source options to use data/luts/current/selection.json')
     parser.add_argument('--output-dir', type=Path, required=True, help='new directory; existing paths are refused')
     parser.add_argument('--max-new-tokens', type=int, default=MISSING, help='output cap 1..512; item > CLI > 512')
     parser.add_argument('--mode', choices=('development', 'performance'), default='development')
@@ -59,6 +60,9 @@ def _repository(args):
         return load_lut_repository(args.lut_dir, reference_lut_dir=reference)
     if reference is not None:
         raise ValueError('--reference-lut-dir requires --lut-dir; cannot combine with --mock')
+    if args.mock is None:
+        from .policy.selection import load_current_lut_repository
+        return load_current_lut_repository()
     from .policy.mock import MockLUTRepository
     return MockLUTRepository(args.mock)
 

@@ -1,0 +1,11 @@
+{
+  "schema": "kvolt.lut-selection.v1",
+  "runtime": {
+    "directory": "agx2-runtime-repeat5",
+    "manifest_sha256": "b421fcd10ecb57df7d6962aa9a5f48e264e90defc0c76a3544218d31685f783b"
+  },
+  "reference": {
+    "directory": "agx2-reference-repeat10",
+    "manifest_sha256": "d332875ccce626dd99700da8c7a128bf4801577333e76ee40a987f4051311e40"
+  }
+}
