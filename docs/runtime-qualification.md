@@ -18,7 +18,9 @@ an untrusted report author. Use reports produced from the reviewed qualification
 driver and inspect its original logs. See [qualification-evidence.md](qualification-evidence.md).
 
 Session audits reconstruct the canonical runtime/reference identity from the
-CLI's nested `metadata.target_repository` record. A supplied repository must
+CLI's nested `metadata.target_repository` record. The binding producer, session
+auditor and performance Runner use that same canonical identity, retaining the
+separate reference manifest and file hashes. A supplied repository must
 match that identity and the recorded source metadata, including selector
 contents and hash. Relocated archives may have a different absolute selector
 path; the frozen plan binds the original path. Historical sealed identities

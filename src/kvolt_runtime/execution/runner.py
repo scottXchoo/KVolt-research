@@ -81,7 +81,7 @@ class SessionRunner:
         """Reject incomplete or mismatched qualification before hardware work."""
         if self.online is not None:
             raise ContractError('adaptive LUT has no formal performance qualification')
-        from ..qualification.contracts import QualificationGrant
+        from ..qualification.contracts import QualificationGrant, _lut_binding, canonical_json
         if not isinstance(self.qualification, QualificationGrant):
             raise ContractError('M4 validated qualification grant is required for performance execution')
         if self.warmup != 'formal' or self.collector_factory is None or not options.collect_power:
@@ -90,10 +90,8 @@ class SessionRunner:
         grant.assert_requests(prepared)
         binding = grant.binding
         source = self.repo.provenance
-        lut = {name: getattr(source, name) for name in
-               ('kind', 'source_device', 'source_commit', 'manifest_sha256', 'files_sha256')}
-        lut['files_sha256'] = dict(lut['files_sha256'])
-        if source.kind != 'measured' or lut != binding.get('lut'):
+        if (source.kind != 'measured'
+                or canonical_json(_lut_binding(source)) != canonical_json(binding.get('lut'))):
             raise ContractError('runtime LUT differs from measured qualification source')
         if options.native_profile != binding.get('native_profile'):
             raise ContractError('runtime native profile differs from qualification')

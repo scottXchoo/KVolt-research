@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -133,6 +134,147 @@ def performance(tmp_path):
 
 def stdout_records(capsys):
     return [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+
+
+@pytest.fixture(params=['current', 'explicit_compact'])
+def real_compact_performance(performance, request):
+    """Real pinned tables, producer and loader; hardware alone stays CPU-only."""
+    from kvolt_runtime.run_cli import _repository
+    root = Path(__file__).resolve().parents[1]/'data/luts'
+    route = request.param
+    args = list(performance.args)
+    lut_dir = root/('current' if route == 'current' else 'agx2-runtime-repeat5')
+    reference = root/'agx2-reference-repeat10' if route == 'explicit_compact' else None
+    args[args.index('--lut-dir')+1] = str(lut_dir)
+    if reference is not None:
+        args += ['--reference-lut-dir', str(reference)]
+    repo = _repository(SimpleNamespace(lut_dir=lut_dir, reference_lut_dir=reference, mock=None))
+    binding = qualification_binding(repo=repo, device_profile=performance.device_profile,
+        power_profile=performance.power_profile, native_profile='agx2', runtime=performance.runtime)
+    report = write_report(performance.report.parent.parent/('real-'+route), binding, {'1024': 4})
+    args[args.index('--qualification')+1] = str(report)
+    def repository(cli_args):
+        performance.events.append('repo')
+        loaded = _repository(cli_args)
+        performance.observed['real_repository'] = loaded
+        return loaded
+    performance.args, performance.repo, performance.binding, performance.report = args, repo, binding, report
+    performance.seam = replace(performance.seam, repository=repository)
+    return performance
+
+
+def test_real_current_and_compact_grant_reaches_real_performance_runner(real_compact_performance, capsys):
+    from kvolt_runtime.policy.compact import CompactLUTRepository
+    from kvolt_runtime.qualification.contracts import _lut_binding
+    from kvolt_runtime.qualification.evidence import load_evidence
+    from kvolt_runtime.run_cli import main
+    fixture = real_compact_performance
+    grant = load_evidence(fixture.report, fixture.binding)
+    assert grant.binding['lut']['reference']['manifest_sha256'] == 'd332875ccce626dd99700da8c7a128bf4801577333e76ee40a987f4051311e40'
+    assert main(fixture.args, factories=fixture.seam) == 0
+    assert stdout_records(capsys)[-1]['exit_code'] == 0
+    actual = fixture.observed['real_repository']
+    assert isinstance(actual, CompactLUTRepository)
+    assert _lut_binding(actual.provenance) == grant.binding['lut']
+    assert fixture.observed['backend'].loads == 1
+    assert isinstance(fixture.observed['runner_kwargs']['qualification'], QualificationGrant)
+    saved = json.loads((fixture.report.parent.parent/'out/session.json').read_text())
+    assert saved['provenance']['formal_evidence_accepted'] is True
+    assert saved['provenance']['formal_performance_qualified'] is True
+    assert saved['warmup']['formal_coverage_qualified'] is True
+    assert saved['results'][0]['generation']['status'] == 'completed'
+    assert saved['results'][0]['energy']['valid'] is True
+    assert not fixture.lock.held
+
+
+@pytest.mark.parametrize('change', ['reference3', 'reference5', 'reference_sha', 'runtime_manifest',
+    'runtime_sha', 'boot', 'device_profile', 'power_profile', 'kernel', 'source', 'scope'])
+def test_real_compact_stale_grant_refuses_before_hardware(real_compact_performance, capsys, change):
+    from kvolt_runtime.run_cli import main
+    fixture = real_compact_performance
+    args = list(fixture.args)
+    if change in ('reference3', 'reference5'):
+        root = Path(__file__).resolve().parents[1]/'data/luts'
+        args[args.index('--lut-dir')+1] = str(root/'agx2-runtime-repeat5')
+        reference = str(root/('agx2-reference-repeat'+change[-1]))
+        if '--reference-lut-dir' in args:
+            args[args.index('--reference-lut-dir')+1] = reference
+        else:
+            args += ['--reference-lut-dir', reference]
+    else:
+        binding = copy.deepcopy(fixture.binding)
+        coverage = {'1024': 3} if change == 'scope' else {'1024': 4}
+        if change == 'reference_sha': binding['lut']['reference']['files_sha256']['reference.json'] = '0'*64
+        elif change == 'runtime_manifest': binding['lut']['manifest_sha256'] = '0'*64
+        elif change == 'runtime_sha': binding['lut']['files_sha256']['decode.json'] = '0'*64
+        elif change == 'boot': binding['identity']['boot_id'] = 'stale'
+        elif change in ('device_profile', 'power_profile'): binding[change]['name'] = 'stale'
+        elif change == 'kernel': binding['native_binaries'][next(iter(binding['native_binaries']))]['sha256'] = '0'*64
+        elif change == 'source': binding['runtime_source_sha256']['fixture.py'] = '0'*64
+        report = write_report(fixture.report.parent/('stale-'+change), binding, coverage)
+        args[args.index('--qualification')+1] = str(report)
+    assert main(args, factories=fixture.seam) == 2
+    record = stdout_records(capsys)[-1]
+    assert record['errors'][0]['stage'] == 'qualification'
+    assert 'lock' not in fixture.events and 'backend' not in fixture.events and 'load' not in fixture.events
+
+
+@pytest.mark.parametrize('change', ['missing_reference', 'reference_manifest', 'reference_files',
+                                    'runtime_manifest', 'runtime_files'])
+def test_real_runner_rechecks_compact_identity_after_cli_grant_loading(real_compact_performance, capsys, change):
+    """A change after the CLI accepts evidence must still block model loading."""
+    from kvolt_runtime.run_cli import main
+    fixture = real_compact_performance
+    original = fixture.seam.runner
+    def changed_runner(**kwargs):
+        repo = kwargs['repo']
+        metadata = json.loads(repo.provenance.metadata_json)
+        if change == 'missing_reference': del metadata['target_repository']
+        elif change == 'reference_manifest': metadata['target_repository']['manifest_sha256'] = '0'*64
+        elif change == 'reference_files': metadata['target_repository']['files_sha256']['reference.json'] = '0'*64
+        elif change == 'runtime_manifest': repo.provenance = replace(repo.provenance, manifest_sha256='0'*64)
+        else: repo.provenance = replace(repo.provenance, files_sha256=(('decode.json', '0'*64),))
+        repo.provenance = replace(repo.provenance, metadata_json=canonical_json(metadata))
+        return original(**kwargs)
+    assert main(fixture.args, factories=replace(fixture.seam, runner=changed_runner)) == 2
+    record = stdout_records(capsys)[-1]
+    assert record['errors'][0]['stage'] == 'qualification'
+    assert 'load' not in fixture.events and 'capture' not in fixture.events
+    saved = json.loads((fixture.report.parent.parent/'out/session.json').read_text())
+    assert saved['provenance']['formal_evidence_accepted'] is True
+    assert saved['provenance']['formal_performance_qualified'] is False
+    assert all(row['generation']['status'] == 'not_run' for row in saved['results'])
+
+
+@pytest.mark.parametrize('change', ['reference_bytes', 'runtime_bytes', 'selector_pin'])
+def test_real_compact_source_bytes_and_selector_pins_refuse_before_hardware(
+        real_compact_performance, capsys, change):
+    from kvolt_runtime.run_cli import main
+    fixture = real_compact_performance
+    source = Path(__file__).resolve().parents[1]/'data/luts'
+    copied = fixture.report.parent/'copied-luts'
+    for directory in ('agx2-runtime-repeat5', 'agx2-reference-repeat10', 'current'):
+        shutil.copytree(source/directory, copied/directory)
+    if change == 'reference_bytes':
+        path = copied/'agx2-reference-repeat10/reference.json'
+        path.write_bytes(path.read_bytes()+b'\n')
+    elif change == 'runtime_bytes':
+        path = copied/'agx2-runtime-repeat5/decode.json'
+        path.write_bytes(path.read_bytes()+b'\n')
+    else:
+        path = copied/'current/selection.json'
+        selection = json.loads(path.read_text())
+        selection['runtime']['manifest_sha256'] = '0'*64
+        path.write_text(canonical_json(selection))
+    args = list(fixture.args)
+    args[args.index('--lut-dir')+1] = str(copied/'current')
+    if '--reference-lut-dir' in args:
+        index = args.index('--reference-lut-dir')
+        del args[index:index+2]
+    assert main(args, factories=fixture.seam) == 2
+    record = stdout_records(capsys)[-1]
+    assert record['errors'][0]['stage'] == 'lut'
+    assert 'lock' not in fixture.events and 'backend' not in fixture.events and 'load' not in fixture.events
 
 
 def test_performance_without_evidence_refuses_before_output_or_lock(tmp_path, capsys):
