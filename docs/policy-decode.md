@@ -34,8 +34,9 @@ calls no repository method, detector or clock. Selection, target, budget, elapse
 td, Knee and feasibility are null; Quality and candidates are empty. It preserves
 the supplied t1.
 
-The active online order is Quality lookup, Knee detection, all 40 Decode lookup,
-Decode target lookup, td clock, elapsed/budget calculation, then selection:
+The active online order is Quality lookup, Knee detection,
+`repo.decode_lookup(L)` for all 40 Decode predictions and the Reference target
+using one interpolation bracket, td clock, elapsed/budget calculation, then selection:
 
 ```python
 elapsed_ns = td_ns - t1_ns
@@ -46,8 +47,11 @@ Integer subtraction precedes conversion to seconds. Backwards or noninteger
 clocks are fatal. Negative budgets are preserved. Failed detection/recovery costs
 remain before td and therefore in elapsed time. Full support preflight belongs
 to Runner; it must not move online interpolation/detection before the first token.
-DC validates the actual five Quality and 40 Decode rows and positive target, even
-with an injected repository. It does not filter away missing or invalid rows.
+DC validates the immutable `DecodeLookup` wrapper, requested L, containing
+bracket, positive finite target, actual five Quality and 40 Decode rows, even
+with an injected repository. All Decode row brackets must match the combined
+lookup bracket. A malformed wrapper is fatal before td; the controller does not
+fall back to separate prediction or target methods. It does not filter away missing or invalid rows.
 Validation constructs fresh `Bracket` and prediction objects, then uses those
 canonical copies for detection, comparisons and returned traces. It revalidates
 nested bracket endpoints and weight, normalizes accepted numeric metrics to

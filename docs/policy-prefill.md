@@ -11,26 +11,30 @@ The caller performs `repo.preflight(L)` before entering the measured phase.
 Every call to `choose` then performs these operations, without caching:
 
 1. Validate integer `L` in `[1024, 8192]` and nonnegative integer `t0_ns`.
-2. Query and validate `repo.prefill_target(L)` first.
-3. Query `repo.prefill_latencies(L)` and validate all eight original frequencies.
-4. Read `prefilter_ns = clock()` and compute the screening budget as
+2. Query `repo.prefill_lookup(L, latency_only=True)` once for the target and
+   all eight TTFTs, using a shared interpolation bracket. Validate the immutable
+   `PrefillLookup` wrapper, requested L, positive finite target, bracket and rows.
+3. Read `prefilter_ns = clock()` and compute the screening budget as
    `target_s - (prefilter_ns - t0_ns) / 1_000_000_000`.
-5. Query `repo.prefill_candidates(L, frequencies)` only for frequencies whose
+4. Query `repo.prefill_candidates(L, frequencies)` only for frequencies whose
    interpolated TTFT is at most the screening budget. If none pass, query only
    all ties at the global minimum TTFT for the latency fallback's energy tie.
-6. Validate those details against the requested subset and earlier TTFT/bracket.
-7. Read `tp_ns = clock()` after all queries and compute the final
+5. Validate those details against the requested subset and earlier TTFT/bracket.
+6. Read `tp_ns = clock()` after all queries and compute the final
    `budget_s = target_s - (tp_ns - t0_ns) / 1_000_000_000`.
-8. Recheck the final budget, select a prediction and record every candidate.
+7. Recheck the final budget, select a prediction and record every candidate.
 
-The latency scan must return an immutable tuple containing exactly one
-`PrefillLatencyPrediction` for each of `408, 510, 612, 714, 816, 918, 1020,
+The combined lookup's `predictions` must be an immutable tuple containing
+exactly one `PrefillLatencyPrediction` for each of `408, 510, 612, 714, 816, 918, 1020,
 1122` MHz. Its `energy_j` is null because energy has not been queried. Details
 must be an immutable tuple of `PrefillPrediction` rows covering exactly the
 requested subset, with finite energy and exactly the earlier TTFT and bracket.
 Every row must have the requested length, valid metrics and a valid containing
 interpolation bracket. The controller revalidates foreign repository rows,
-including nested bracket fields. Missing, duplicate, unsupported, inconsistent
+including the wrapper and nested bracket fields. Every row bracket must match
+the lookup bracket. A foreign wrapper or invalid target fails before the first
+clock or details query. The controller never falls back to separate target or
+latency methods. Missing, duplicate, unsupported, inconsistent
 or invalid rows reject the request with `ContractError`; valid metric values
 are normalized to binary64 before selection. Full LUT support is still checked
 before the measured phase. Null in the decision trace means energy was not
@@ -75,8 +79,9 @@ transformers imports. Sealed measured integration uses `KVOLT_LUT_BUNDLE`
 1024/2048 knots and their 1536 midpoint. These CPU policy checks do not
 establish GPU execution, actual SLOs or formal runtime qualification.
 
-This target-first lookup order implements the user's 2026-11-08 change to the
-earlier all-details-before-target PC order. All eight interpolated TTFTs are
-still inspected: there is no TTFT index or assumed frequency monotonicity.
+The combined lookup returns the Reference target and all eight interpolated
+TTFTs before screening and detailed energy lookup. There is no TTFT index or
+assumed frequency monotonicity.
+
 Only energy/detail lookup is reduced; no runtime speedup is claimed without
 measurement. Source LUT and reference files are unchanged.

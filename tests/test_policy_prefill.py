@@ -11,7 +11,7 @@ import pytest
 from kvolt_runtime.errors import ContractError
 from kvolt_runtime.policy.prefill import PrefillController
 from kvolt_runtime.policy.types import (
-    Bracket, FREQUENCIES_MHZ, PrefillLatencyPrediction, PrefillPrediction,
+    Bracket, FREQUENCIES_MHZ, PrefillLatencyPrediction, PrefillLookup, PrefillPrediction,
 )
 
 
@@ -21,14 +21,29 @@ class Repo:
         self.target = target
         self.latency_rows = None
         self.detail_rows = None
+        self.lookup = None
         self.rows = tuple(PrefillPrediction(1024, f, 1.0, 10.0, Bracket(1024, 1024, 0))
                           for f in FREQUENCIES_MHZ)
 
     def prefill(self, length):
         pytest.fail('PC used the offline full-details API')
 
+    def prefill_lookup(self, length, *, latency_only=False):
+        self.calls.append(('lookup', length, latency_only))
+        assert latency_only is True
+        if self.lookup is not None:
+            return self.lookup
+        # Bypass construction to exercise validation of foreign/corrupted data.
+        lookup = object.__new__(PrefillLookup)
+        for name, value in (('length', length), ('predictions', self.latencies()),
+                            ('target_s', self.target), ('bracket', Bracket(1024, 1024, 0))):
+            object.__setattr__(lookup, name, value)
+        return lookup
+
     def prefill_latencies(self, length):
-        self.calls.append(('latencies', length))
+        pytest.fail('PC used the separate latency API')
+
+    def latencies(self):
         if self.latency_rows is not None:
             return self.latency_rows
         rows = []
@@ -48,8 +63,7 @@ class Repo:
         return tuple(row for row in self.rows if row.frequency_mhz in frequencies)
 
     def prefill_target(self, length):
-        self.calls.append(('target', length))
-        return self.target
+        pytest.fail('PC used the separate target API')
 
     def cell(self, frequency, **changes):
         self.rows = tuple(replace(row, **changes) if row.frequency_mhz == frequency else row
@@ -60,11 +74,11 @@ def choose(repo, *, elapsed=0, t0=100):
     return PrefillController(repo, clock=lambda: t0 + elapsed).choose(1024, t0)
 
 
-def test_target_is_first_query_and_invalid_target_prevents_lut_access():
+def test_invalid_combined_target_prevents_details():
     repo = Repo(target=math.nan)
     with pytest.raises(ContractError):
         choose(repo)
-    assert repo.calls == [('target', 1024)]
+    assert repo.calls == [('lookup', 1024, True)]
 
 
 def test_prefilter_looks_up_energy_only_inside_remaining_time_budget():
@@ -74,7 +88,7 @@ def test_prefilter_looks_up_energy_only_inside_remaining_time_budget():
     repo.cell(612, ttft_s=1.5, energy_j=1)
     result = choose(repo, elapsed=500_000_000)
     expected = tuple(f for f in FREQUENCIES_MHZ if f not in (408, 510))
-    assert repo.calls == [('target', 1024), ('latencies', 1024), ('details', 1024, expected)]
+    assert repo.calls == [('lookup', 1024, True), ('details', 1024, expected)]
     assert result.selected.frequency_mhz == 612
     assert all(c.prediction.energy_j is None for c in result.candidates[:2])
     assert all(isinstance(c.prediction, PrefillLatencyPrediction) for c in result.candidates[:2])
@@ -154,12 +168,12 @@ def test_foreign_detail_subset_must_match_requested_rows_and_prior_latency(kind)
                                       ('length', True), ('bracket', None)])
 def test_foreign_latency_dataclass_is_revalidated_before_details(field, bad):
     repo = Repo()
-    repo.latency_rows = repo.prefill_latencies(1024)
+    repo.latency_rows = repo.latencies()
     repo.calls.clear()
     object.__setattr__(repo.latency_rows[0], field, bad)
     with pytest.raises(ContractError):
         choose(repo)
-    assert repo.calls == [('target', 1024), ('latencies', 1024)]
+    assert repo.calls == [('lookup', 1024, True)]
 
 
 def test_energy_minimum_filters_fast_expensive_and_slow_cheap_candidates():
@@ -240,12 +254,12 @@ def test_phase_order_measures_lookup_and_target_cost_and_never_calls_other_phase
     repo = Repo()
     def forbidden(*args):
         pytest.fail('PC called preflight, Quality, Decode or Knee')
-    repo.preflight = repo.quality = repo.decode = repo.decode_target = repo.detect = forbidden
+    repo.preflight = repo.quality = repo.decode = repo.decode_lookup = repo.decode_target = repo.detect = forbidden
     def clock():
         repo.calls.append(('clock', None))
         return 500_000_100
     result = PrefillController(repo, clock=clock).choose(1024, 100)
-    assert repo.calls == [('target', 1024), ('latencies', 1024), ('clock', None),
+    assert repo.calls == [('lookup', 1024, True), ('clock', None),
                           ('details', 1024, FREQUENCIES_MHZ), ('clock', None)]
     assert result.prefilter_ns == 500_000_100
     assert result.elapsed_ns == 500_000_000 and result.budget_s == 1.5
@@ -267,7 +281,7 @@ def test_repeated_requests_repeat_online_lookup_and_target_no_cached_decision():
     repo.target = 0.1
     result = controller.choose(1024, 100)
     assert result.selection_path == 'latency_fallback' and result.selected.frequency_mhz == 1122
-    assert repo.calls == [('target', 1024), ('latencies', 1024),
+    assert repo.calls == [('lookup', 1024, True),
                           ('details', 1024, FREQUENCIES_MHZ)] * 2
 
 
@@ -304,7 +318,7 @@ def test_invalid_target_is_fatal_and_does_not_read_clock(bad):
 @pytest.mark.parametrize('kind', ['list', 'empty', 'missing', 'duplicate', 'extra', 'foreign', 'wrong_length'])
 def test_incomplete_or_foreign_rows_rejected(kind):
     repo = Repo()
-    rows = repo.prefill_latencies(1024)
+    rows = repo.latencies()
     repo.calls.clear()
     repo.latency_rows = {
         'list': list(rows), 'empty': (), 'missing': rows[:-1],
@@ -314,7 +328,7 @@ def test_incomplete_or_foreign_rows_rejected(kind):
     }[kind]
     with pytest.raises(ContractError):
         choose(repo)
-    assert repo.calls == [('target', 1024), ('latencies', 1024)]
+    assert repo.calls == [('lookup', 1024, True)]
 
 
 @pytest.mark.parametrize('field,bad', [
@@ -412,3 +426,35 @@ def test_sealed_bundle_manual_small_cases(length, elapsed, target, time, energy,
                         if row.frequency_mhz == 1020)
         assert original.energy_j == 69.42603514426558
         assert lower_energy.meets_budget is False
+
+
+@pytest.mark.parametrize('field,bad', [
+    ('length', True), ('length', 2048), ('bracket', None),
+    ('bracket', Bracket(2048, 2048, 0)),
+    ('bracket', Bracket(1024, 2048, 0)),
+])
+def test_combined_lookup_metadata_is_validated_before_details_and_clock(field, bad):
+    repo = Repo()
+    repo.lookup = repo.prefill_lookup(1024, latency_only=True)
+    repo.calls.clear()
+    object.__setattr__(repo.lookup, field, bad)
+    with pytest.raises(ContractError):
+        PrefillController(repo, clock=lambda: pytest.fail('invalid lookup reached clock')).choose(1024, 100)
+    assert repo.calls == [('lookup', 1024, True)]
+
+
+@pytest.mark.parametrize('bad', [object(), None, {}, ()])
+def test_foreign_combined_lookup_wrapper_is_rejected(bad):
+    repo = Repo()
+    repo.prefill_lookup = lambda *args, **kwargs: bad
+    with pytest.raises(ContractError):
+        PrefillController(repo, clock=lambda: pytest.fail('invalid wrapper reached clock')).choose(1024, 100)
+
+
+@pytest.mark.parametrize('field,bad', [('lower', 1024.0), ('upper', 8193), ('weight', math.nan)])
+def test_corrupted_combined_lookup_bracket_is_revalidated(field, bad):
+    repo = Repo()
+    repo.lookup = repo.prefill_lookup(1024, latency_only=True)
+    object.__setattr__(repo.lookup.bracket, field, bad)
+    with pytest.raises(ContractError):
+        choose(repo)

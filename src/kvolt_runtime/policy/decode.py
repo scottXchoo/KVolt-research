@@ -5,8 +5,8 @@ from ..config import EOS_TOKEN_IDS, GROUPS, require_int
 from ..errors import ContractError
 from .knee import KneeAdapter, validate_quality
 from .types import (
-    Bracket, DecodeCandidate, DecodeDecision, DecodePrediction, FREQUENCIES_MHZ,
-    KneeResult, LUTRepository, elapsed_since, finite, length as validate_length,
+    Bracket, DecodeCandidate, DecodeDecision, DecodeLookup, DecodePrediction, FREQUENCIES_MHZ,
+    KneeResult, LUTRepository, elapsed_since, length as validate_length,
 )
 
 
@@ -33,7 +33,7 @@ def _validate_decode(predictions, requested_length):
 
 
 class DecodeController:
-    """Query Q, detect Knees, query all Decode rows and target, then read td.
+    """Query Q, detect Knees, query Decode rows and target together, then td.
 
     Runner preflight remains outside this online phase. This controller neither
     caches per-request interpolation/detection nor changes device state.
@@ -60,8 +60,19 @@ class DecodeController:
         if not isinstance(knee, KneeResult):
             raise ContractError('Knee adapter must return KneeResult')
         KneeResult(knee.status, knee.groups, knee.reason, knee.error_type, knee.error_message)
-        predictions = _validate_decode(self.repo.decode(length), length)
-        target = finite(self.repo.decode_target(length), 'Decode target seconds/token', positive=True)
+        lookup = self.repo.decode_lookup(length)
+        if not isinstance(lookup, DecodeLookup):
+            raise ContractError('Decode LUT must return DecodeLookup')
+        if not isinstance(lookup.bracket, Bracket):
+            raise ContractError('Decode lookup requires an interpolation bracket')
+        bracket = Bracket(lookup.bracket.lower, lookup.bracket.upper, lookup.bracket.weight)
+        lookup = DecodeLookup(lookup.length, lookup.predictions, lookup.target_s, bracket)
+        if lookup.length != length:
+            raise ContractError('Decode lookup must match requested L')
+        predictions = _validate_decode(lookup.predictions, length)
+        if any(row.bracket != bracket for row in predictions):
+            raise ContractError('Decode rows must match the lookup interpolation bracket')
+        target = lookup.target_s
         td_ns = self.clock()
         elapsed_ns = elapsed_since(t1_ns, td_ns)
         budget = target - (elapsed_ns / 1_000_000_000) / (nmax - 1)

@@ -83,23 +83,28 @@ def test_skip_without_detector_quality_decode_or_clock(monkeypatch, capsys, flag
             events.append('preflight'); return super().preflight(length)
         def prefill(self, length):
             pytest.fail('online full-details Prefill lookup')
+        def prefill_lookup(self, length, *, latency_only=False):
+            assert latency_only is True
+            events.append('prefill_lookup'); return super().prefill_lookup(length, latency_only=True)
         def prefill_latencies(self, length):
-            events.append('prefill_latencies'); return super().prefill_latencies(length)
+            pytest.fail('online separate Prefill latency lookup')
         def prefill_candidates(self, length, frequencies):
             events.append('prefill_candidates'); return super().prefill_candidates(length, frequencies)
         def prefill_target(self, length):
-            events.append('prefill_target'); return super().prefill_target(length)
+            pytest.fail('online separate Prefill target lookup')
         def quality(self, length):
             pytest.fail('quality on skip')
         def decode(self, length):
             pytest.fail('decode on skip')
+        def decode_lookup(self, length):
+            pytest.fail('combined decode lookup on skip')
         def decode_target(self, length):
             pytest.fail('decode target on skip')
     monkeypatch.setattr(cli, '_build_repository', lambda args: Spy())
     monkeypatch.setattr(cli, '_new_knee_adapter', lambda: pytest.fail('detector initialization on skip'))
     assert cli.main(arguments(*flags)) == 0
     data = report(capsys)
-    assert events == ['preflight','prefill_target','prefill_latencies','prefill_candidates']
+    assert events == ['preflight','prefill_lookup','prefill_candidates']
     dc = data['decode']
     assert dc['status'] == 'skipped' and dc['skip_reason'] == reason
     for key in ('selected','target_s','budget_s','elapsed_ns','td_ns','knee','predicted_feasible'):
@@ -114,6 +119,8 @@ def test_preflight_failure_prevents_online_queries(monkeypatch, capsys):
             raise ValueError('unsupported fixture')
         def prefill(self, length):
             pytest.fail('query after failed preflight')
+        def prefill_lookup(self, length, *, latency_only=False):
+            pytest.fail('combined lookup after failed preflight')
         def prefill_target(self, length):
             pytest.fail('target query after failed preflight')
         def prefill_latencies(self, length):
@@ -255,18 +262,23 @@ def test_online_order_and_assumed_clock_boundaries(monkeypatch,capsys):
             events.append('preflight'); return super().preflight(L)
         def prefill(self,L):
             pytest.fail('online full-details Prefill lookup')
+        def prefill_lookup(self,L,*,latency_only=False):
+            assert latency_only is True
+            events.append('prefill_lookup'); return super().prefill_lookup(L,latency_only=True)
         def prefill_latencies(self,L):
-            events.append('prefill_latencies'); return super().prefill_latencies(L)
+            pytest.fail('online separate Prefill latency lookup')
         def prefill_candidates(self,L,frequencies):
             events.append('prefill_candidates'); return super().prefill_candidates(L,frequencies)
         def prefill_target(self,L):
-            events.append('prefill_target'); return super().prefill_target(L)
+            pytest.fail('online separate Prefill target lookup')
         def quality(self,L):
             events.append('quality'); return super().quality(L)
+        def decode_lookup(self,L):
+            events.append('decode_lookup'); return super().decode_lookup(L)
         def decode(self,L):
-            events.append('decode'); return super().decode(L)
+            pytest.fail('online separate Decode lookup')
         def decode_target(self,L):
-            events.append('decode_target'); return super().decode_target(L)
+            pytest.fail('online separate Decode target lookup')
     class Detector:
         def detect(self,quality):
             events.append('detect'); return KneeResult('not_found',reason='no_knee')
@@ -274,8 +286,8 @@ def test_online_order_and_assumed_clock_boundaries(monkeypatch,capsys):
     monkeypatch.setattr(cli,'_new_knee_adapter',lambda: Detector())
     assert cli.main(arguments())==0
     data=report(capsys)
-    assert events==['preflight','prefill_target','prefill_latencies','prefill_candidates',
-                    'quality','detect','decode','decode_target']
+    assert events==['preflight','prefill_lookup','prefill_candidates',
+                    'quality','detect','decode_lookup']
     assert data['prefill']['t0_ns']==0 and data['prefill']['tp_ns']==1000000
     assert data['decode']['t1_ns']==0 and data['decode']['td_ns']==2000000
 

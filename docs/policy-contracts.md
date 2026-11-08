@@ -4,22 +4,30 @@
 SciPy, kneed, torch or a GPU model. Existing M1 contracts and arithmetic remain
 unchanged. Python float is binary64; selection compares the full values directly.
 
-`LUTRepository` provides separate `prefill`, `prefill_latencies`,
-`prefill_candidates`, `quality`, `decode`,
-`prefill_target`, and `decode_target` methods. `preflight(L)` checks full support
+`LUTRepository` provides combined `prefill_lookup(L, latency_only=False)` and
+`decode_lookup(L)` methods. Frozen `PrefillLookup` and `DecodeLookup` contain
+`length`, immutable `predictions`, positive finite `target_s` and a shared
+`bracket`. Predictions and Reference target reuse one performance-length bracket
+calculation. Separate `prefill`, `prefill_latencies`, `prefill_candidates`,
+`quality`, `decode`, `prefill_target`, and `decode_target` remain available for
+compatibility. `preflight(L)` checks full support
 without calling those online interpolation methods. All immutable predictions
 carry L, original candidate identifiers and a containing interpolation bracket.
 Quality uses raw RULER mean_score in [0,1], never retention q. The raw metadata
 and source pins are retained in `LUTProvenance`; an adapter may not turn
 runtime_eligible=false into a declaration of formal Runtime qualification.
 
-PC queries its target first, then all eight TTFTs. It reads an injected
+PC queries its target and all eight TTFTs together with
+`prefill_lookup(L, latency_only=True)`. It reads an injected
 integer-nanosecond screening clock and queries detailed predictions only for
 the frequencies within the remaining budget, or global minimum-TTFT ties if
 none pass. A second clock after the detail lookup supplies the final budget;
 selection rechecks that budget. Both clock boundaries must be nondecreasing.
 DC checks Nmax/first-EOS before lookup, then performs
-quality lookup, Knee detection, all Decode lookup, Decode target, and its clock.
+quality lookup, Knee detection, combined Decode predictions/target lookup,
+and its clock. Controllers revalidate combined wrapper type, requested length,
+finite positive target and nested bracket metadata; each row bracket must match
+the combined bracket. Malformed output is fatal without a separate-API fallback.
 Only then are budgets and candidates selected. Negative budgets stay negative.
 Clock subtraction happens as integers before conversion to seconds. A clock
 moving backwards is a contract error, not a Knee recovery.

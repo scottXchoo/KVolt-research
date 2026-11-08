@@ -5,7 +5,7 @@ from ..config import require_int
 from ..errors import ContractError
 from .types import (
     Bracket, FREQUENCIES_MHZ, LUTRepository, PrefillCandidate, PrefillDecision,
-    PrefillLatencyPrediction, PrefillPrediction, elapsed_since, finite,
+    PrefillLatencyPrediction, PrefillLookup, PrefillPrediction, elapsed_since,
     length as validate_length,
 )
 
@@ -37,7 +37,7 @@ def _validate_prefill(predictions, requested_length, frequencies, *, latency_onl
 
 
 class PrefillController:
-    """Query the target and all TTFTs before fetching budget-eligible details.
+    """Query target and all TTFTs together before budget-eligible details.
 
     The M3 caller performs full-support preflight before entering this phase.
     This controller does no device/file work or request-result caching.
@@ -51,9 +51,20 @@ class PrefillController:
         validate_length(length)
         require_int(t0_ns, 'Prefill start ns', 0)
 
-        target = finite(self.repo.prefill_target(length), 'Prefill target seconds', positive=True)
+        lookup = self.repo.prefill_lookup(length, latency_only=True)
+        if not isinstance(lookup, PrefillLookup):
+            raise ContractError('Prefill LUT must return PrefillLookup')
+        if not isinstance(lookup.bracket, Bracket):
+            raise ContractError('Prefill lookup requires an interpolation bracket')
+        bracket = Bracket(lookup.bracket.lower, lookup.bracket.upper, lookup.bracket.weight)
+        lookup = PrefillLookup(lookup.length, lookup.predictions, lookup.target_s, bracket)
+        if lookup.length != length:
+            raise ContractError('Prefill lookup must match requested L')
+        target = lookup.target_s
         latencies = _validate_prefill(
-            self.repo.prefill_latencies(length), length, FREQUENCIES_MHZ, latency_only=True)
+            lookup.predictions, length, FREQUENCIES_MHZ, latency_only=True)
+        if any(row.bracket != bracket for row in latencies):
+            raise ContractError('Prefill rows must match the lookup interpolation bracket')
         prefilter_ns = self.clock()
         prefilter_elapsed_ns = elapsed_since(t0_ns, prefilter_ns)
         prefilter_budget = target - prefilter_elapsed_ns / 1_000_000_000
