@@ -17,6 +17,13 @@ symlinks. These hashes identify the supplied evidence; they do not authenticate
 an untrusted report author. Use reports produced from the reviewed qualification
 driver and inspect its original logs. See [qualification-evidence.md](qualification-evidence.md).
 
+Session audits reconstruct the canonical runtime/reference identity from the
+CLI's nested `metadata.target_repository` record. A supplied repository must
+match that identity and the recorded source metadata, including selector
+contents and hash. Relocated archives may have a different absolute selector
+path; the frozen plan binds the original path. Historical sealed identities
+retain their existing contract.
+
 ## Frozen execution plan
 
 Use the pinned AGX2 Python/environment and a clean committed checkout.

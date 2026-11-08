@@ -9,7 +9,7 @@ from fractions import Fraction
 import math
 from pathlib import Path
 
-from .contracts import canonical_json, strict_json, file_sha256, value_sha256
+from .contracts import canonical_json, strict_json, file_sha256, value_sha256, _lut_binding
 
 RAILS = ('VDD_GPU_SOC', 'VDD_CPU_CV', 'VIN_SYS_5V0')
 EOS = {128001, 128008, 128009}
@@ -432,6 +432,39 @@ def audit_policy(result, repository=None):
                 'unverified selected GPU frequency')
 
 
+def _audit_lut_provenance(recorded, expected, repository):
+    """Rebuild the producer's identity from CLI metadata, including targets."""
+    from ..policy.types import LUTProvenance
+    fields = ('kind', 'source_device', 'source_commit', 'manifest_sha256', 'files_sha256', 'metadata')
+    require(type(recorded) is dict and all(key in recorded for key in fields)
+            and type(recorded['files_sha256']) is dict and type(recorded['metadata']) is dict,
+            'invalid recorded LUT provenance')
+    provenance = LUTProvenance(
+        kind=recorded['kind'], source_device=recorded['source_device'],
+        source_commit=recorded['source_commit'], manifest_sha256=recorded['manifest_sha256'],
+        files_sha256=tuple(recorded['files_sha256'].items()),
+        metadata_json=canonical_json(recorded['metadata']))
+    require(canonical_json(_lut_binding(provenance)) == canonical_json(expected), 'LUT provenance mismatch')
+    selection = recorded['metadata'].get('current_selection')
+    if selection is not None:
+        require(type(selection) is dict and set(selection) == {'path', 'sha256', 'selection'}
+                and type(selection['path']) is str and '\\' not in selection['path'] and '\x00' not in selection['path']
+                and Path(selection['path']).is_absolute() and Path(selection['path']).name == 'selection.json'
+                and '..' not in Path(selection['path']).parts, 'invalid recorded LUT selection path')
+    if repository is not None:
+        from ..cli import _source_metadata
+        require(canonical_json(_lut_binding(repository.provenance)) == canonical_json(expected),
+                'audited repository LUT identity mismatch')
+        actual = _source_metadata(repository.provenance)
+        actual_selection = actual['metadata'].get('current_selection')
+        if selection is not None and actual_selection is not None:
+            # Archived evidence may be audited on another host. Component/hash
+            # contents remain exact; the original absolute path is checked by
+            # the frozen plan instead of comparing it with this host's path.
+            actual_selection['path'] = selection['path']
+        require(canonical_json(recorded) == canonical_json(actual), 'recorded LUT metadata differs from repository')
+
+
 def audit_session(path, *, require_formal_warmup=False, binding=None, expected_requests=None, repository=None):
     path = Path(path)
     path = artifact(path.parent, path.name)
@@ -452,7 +485,7 @@ def audit_session(path, *, require_formal_warmup=False, binding=None, expected_r
         require(runtime['installed_distribution_versions'] == binding['policy_versions'], 'scientific distribution versions mismatch')
         require(provenance['device_profile'] == binding['device_profile']
                 and provenance['power_profile'] == binding['power_profile'], 'device/collector profile mismatch')
-        require(all(provenance['lut'][key] == value for key, value in binding['lut'].items()), 'LUT provenance mismatch')
+        _audit_lut_provenance(provenance['lut'], binding['lut'], repository)
         require(session['device_preflight']['identity'] == binding['identity'], 'device/boot mismatch')
         audit_native(session['backend'], binding, raw_prefill=True)
     if expected_requests is not None:

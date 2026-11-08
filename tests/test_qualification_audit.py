@@ -2,6 +2,8 @@
 import copy
 import csv
 from fractions import Fraction
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,6 +11,101 @@ from kvolt_runtime.qualification.audit import (
     RAILS, audit_native, audit_policy, audit_restoration, audit_session, audit_warmup, integrate_trace,
 )
 from kvolt_runtime.qualification.contracts import canonical_json, file_sha256, value_sha256
+
+
+@pytest.fixture
+def recorded_current_lut():
+    from kvolt_runtime.cli import _source_metadata
+    from kvolt_runtime.policy.compact import load_lut_repository
+    from kvolt_runtime.qualification.contracts import _lut_binding
+    repository = load_lut_repository(Path(__file__).resolve().parents[1]/'data/luts/current')
+    return repository, _source_metadata(repository.provenance), _lut_binding(repository.provenance)
+
+
+@pytest.mark.parametrize('source_kind', ['current', 'archived_current', 'legacy_sealed'])
+def test_session_audit_accepts_canonical_recorded_lut_binding(
+        session_bundle, native_bundle, recorded_current_lut, monkeypatch, source_kind):
+    """Reach native verification with the actual CLI's nested reference record."""
+    import kvolt_runtime.qualification.audit as audit
+    from kvolt_runtime.cli import _source_metadata
+    from kvolt_runtime.policy.lut import MANIFEST_SHA256
+    from kvolt_runtime.policy.types import LUTProvenance
+    from kvolt_runtime.qualification.contracts import _lut_binding
+    root, session, result, save = session_bundle
+    repo, recorded, lut_binding = recorded_current_lut
+    if source_kind == 'legacy_sealed':
+        repo = SimpleNamespace(provenance=LUTProvenance(kind='measured', source_device='AGX2',
+            manifest_sha256=MANIFEST_SHA256, files_sha256=(('fixture.json', 'a'*64),)))
+        recorded, lut_binding = _source_metadata(repo.provenance), _lut_binding(repo.provenance)
+    elif source_kind == 'archived_current':
+        recorded['metadata']['current_selection']['path'] = '/archived-host/kvolt/data/luts/current/selection.json'
+    runtime = {'source_worktree_dirty': False, 'source_sha256': {'runtime.py': 'a'*64},
+               'python': '3.12.14', 'platform': 'test', 'required_policy_versions': {},
+               'installed_distribution_versions': {}}
+    binding = {**native_bundle[1], 'runtime_source_sha256': runtime['source_sha256'],
+               'python': runtime['python'], 'platform': runtime['platform'], 'policy_versions': {},
+               'device_profile': {}, 'power_profile': {}, 'lut': lut_binding,
+               'identity': {'physical_id_sha256': 'b'*64, 'boot_id': 'boot'}}
+    session['provenance'].update(runtime=runtime, lut=recorded, device_profile={}, power_profile={},
+        command={'resolved': {'lut_dir': str(Path(recorded['metadata']['current_selection']['path']).parent)
+                             if source_kind != 'legacy_sealed' else '/legacy'}})
+    session['device_preflight']['identity'] = binding['identity']
+    save()
+    class ReachedNativeVerification(Exception): pass
+    monkeypatch.setattr(audit, 'audit_native', lambda *args, **kwargs: (_ for _ in ()).throw(ReachedNativeVerification()))
+    with pytest.raises(ReachedNativeVerification):
+        audit_session(root/'session.json', binding=binding, repository=repo)
+
+
+@pytest.mark.parametrize('mutation', ['missing_reference', 'flat_reference_only', 'reference_manifest',
+    'reference_files', 'reference_device', 'old_reference', 'runtime_manifest', 'runtime_files',
+    'metadata_missing', 'metadata_list', 'selector_hash', 'selector_content', 'selector_path',
+    'reference_conditions', 'unknown_identity_field', 'repository_reference'])
+def test_session_audit_denies_changed_recorded_current_identity(
+        session_bundle, native_bundle, recorded_current_lut, monkeypatch, mutation):
+    import kvolt_runtime.qualification.audit as audit
+    from kvolt_runtime.policy.compact import load_lut_repository
+    root, session, result, save = session_bundle
+    repo, recorded, lut_binding = recorded_current_lut
+    runtime = {'source_worktree_dirty': False, 'source_sha256': {'runtime.py': 'a'*64},
+               'python': '3.12.14', 'platform': 'test', 'required_policy_versions': {},
+               'installed_distribution_versions': {}}
+    binding = {**native_bundle[1], 'runtime_source_sha256': runtime['source_sha256'],
+               'python': runtime['python'], 'platform': runtime['platform'], 'policy_versions': {},
+               'device_profile': {}, 'power_profile': {}, 'lut': lut_binding,
+               'identity': {'physical_id_sha256': 'b'*64, 'boot_id': 'boot'}}
+    selection_path = recorded['metadata']['current_selection']['path']
+    metadata = recorded['metadata']; reference = metadata['target_repository']
+    if mutation == 'missing_reference': del metadata['target_repository']
+    elif mutation == 'flat_reference_only':
+        recorded['reference'] = metadata.pop('target_repository')
+    elif mutation == 'reference_manifest': reference['manifest_sha256'] = '0'*64
+    elif mutation == 'reference_files': reference['files_sha256']['reference.json'] = '0'*64
+    elif mutation == 'reference_device': reference['source_device'] = 'agx1'
+    elif mutation == 'old_reference':
+        from kvolt_runtime.cli import _source_metadata
+        old = load_lut_repository(Path(__file__).resolve().parents[1]/'data/luts/agx2-runtime-repeat5',
+            reference_lut_dir=Path(__file__).resolve().parents[1]/'data/luts/agx2-reference-repeat5')
+        metadata['target_repository'] = _source_metadata(old.provenance)['metadata']['target_repository']
+    elif mutation == 'runtime_manifest': recorded['manifest_sha256'] = '0'*64
+    elif mutation == 'runtime_files': recorded['files_sha256']['decode.json'] = '0'*64
+    elif mutation == 'metadata_missing': del recorded['metadata']
+    elif mutation == 'metadata_list': recorded['metadata'] = []
+    elif mutation == 'selector_hash': metadata['current_selection']['sha256'] = '0'*64
+    elif mutation == 'selector_content': metadata['current_selection']['selection']['reference']['directory'] = 'agx2-reference-repeat5'
+    elif mutation == 'selector_path': metadata['current_selection']['path'] = '../current/selection.json'
+    elif mutation == 'reference_conditions': reference['source_conditions']['total_requests'] = 40
+    elif mutation == 'unknown_identity_field': binding['lut']['unexpected'] = True
+    else:
+        from dataclasses import replace
+        repo = SimpleNamespace(provenance=replace(repo.provenance, manifest_sha256='0'*64))
+    session['provenance'].update(runtime=runtime, lut=recorded, device_profile={}, power_profile={},
+        command={'resolved': {'lut_dir': str(Path(selection_path).parent)}})
+    session['device_preflight']['identity'] = binding['identity']
+    save()
+    monkeypatch.setattr(audit, 'audit_native', lambda *args, **kwargs: pytest.fail('malformed LUT identity reached native audit'))
+    with pytest.raises(ValueError, match='LUT|compact'):
+        audit_session(root/'session.json', binding=binding, repository=repo)
 
 
 def trace():
