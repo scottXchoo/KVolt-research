@@ -46,8 +46,11 @@ def compact(reference):
 
 
 def test_original_manifest_and_raw_bytes_are_pinned():
-    assert hashlib.sha256((LATEST / 'manifest.json').read_bytes()).hexdigest() == MANIFEST_PIN
-    assert (LATEST / 'manifest.json').read_bytes() == (ROOT / 'artifacts/latest-lut/sources/compact-manifest.json').read_bytes()
+    # The recovered source export is not distributed in fresh checkouts.
+    # Its independently recorded byte count/hash pin the tracked copy exactly.
+    raw_manifest = (LATEST / 'manifest.json').read_bytes()
+    assert len(raw_manifest) == 4809
+    assert hashlib.sha256(raw_manifest).hexdigest() == MANIFEST_PIN
     for name, pin in PINS.items():
         assert hashlib.sha256((LATEST / name).read_bytes()).hexdigest() == pin
 
