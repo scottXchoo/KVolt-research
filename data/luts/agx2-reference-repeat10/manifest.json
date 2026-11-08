@@ -1,0 +1,118 @@
+{
+  "schema": "kvolt.reference-lut.v1",
+  "context": {
+    "device_id": "A2",
+    "model_id": "meta-llama/Llama-3.1-8B-Instruct",
+    "model_revision": "0e9e39f249a16976918f6564b8830bc894c89659",
+    "weight_dtype": "float16",
+    "kv_precision": "FP16",
+    "generation": {
+      "force_length": false,
+      "max_new_tokens": 512
+    },
+    "cpu_khz": 2201600,
+    "emc_hz": 3199000000,
+    "gpu_policy": "default_governor_cap1122",
+    "gpu_governor": "nvhost_podgov",
+    "gpu_min_hz": 306000000,
+    "gpu_max_hz": 1122000000,
+    "technical_repeats_per_length": 10,
+    "total_requests": 80,
+    "documents_per_length": 1,
+    "aggregation": "independent_maximum_TTFT_and_request_mean_TPOT_per_length",
+    "prefill_boundary": "t0..t1",
+    "decode_TPOT": "(tN-t1)/(N-1); only N>1"
+  },
+  "interpolation": {
+    "axis": "length",
+    "method": "piecewise_linear",
+    "extrapolation": false
+  },
+  "units": {
+    "length": "tokens",
+    "r_p_ttft_s": "s",
+    "r_d_tpot_s": "s/token"
+  },
+  "policy_multipliers": {
+    "prefill": 1.0,
+    "decode": 1.0
+  },
+  "table": {
+    "file": "reference.json",
+    "columns": [
+      "length",
+      "r_p_ttft_s",
+      "r_d_tpot_s"
+    ],
+    "rows": 8,
+    "lengths": [
+      1024,
+      2048,
+      3072,
+      4096,
+      5120,
+      6144,
+      7168,
+      8192
+    ],
+    "bytes": 310,
+    "sha256": "359fd02c609738755c87847f27b19286f45a3a7cb8d6bef8acd7c369e1c30c2b"
+  },
+  "created_utc": "2026-11-08T09:27:40.631697+00:00",
+  "evidence_files": {
+    "source-validation.json": {
+      "bytes": 40244,
+      "sha256": "f954289b28ac94e3945d7ffeb0efa26e851fdfdc8025988181a94bdeabe8e8ea"
+    }
+  },
+  "sources": {
+    "analysis_fp16-reference-curves_json": {
+      "path": "/mnt/kvolt-data/kvolt/artifacts/fp16-reference/fp16-a2-dvfs-r10-merged-20261108-r1/analysis/fp16-reference-curves.json",
+      "bytes": 28313,
+      "sha256": "63c3489f41c322d0ab2835b23bd0cf44975db6709e1403f772bf28339b4de955"
+    },
+    "completion_json": {
+      "path": "/mnt/kvolt-data/kvolt/artifacts/fp16-reference/fp16-a2-dvfs-r10-merged-20261108-r1/completion.json",
+      "bytes": 9150,
+      "sha256": "0b4a9e31ae1799a66120e870c9ace4a988d649332a444f164a0cb810d3173ba2"
+    },
+    "manifest_json": {
+      "path": "/mnt/kvolt-data/kvolt/artifacts/fp16-reference/fp16-a2-dvfs-r10-merged-20261108-r1/manifest.json",
+      "bytes": 39545,
+      "sha256": "827ed5a1be871728065c3628fcbf240cf46bc94c41d08f5c715bde08eb20c554"
+    },
+    "restoration_json": {
+      "path": "/mnt/kvolt-data/kvolt/artifacts/fp16-reference/fp16-a2-dvfs-r10-merged-20261108-r1/restoration.json",
+      "bytes": 187,
+      "sha256": "225272f072957d6d6e37a56a00d29ecade4991dd141dc50b143d07eaefc551ee"
+    },
+    "spec_json": {
+      "path": "/mnt/kvolt-data/kvolt/artifacts/fp16-reference/fp16-a2-dvfs-r10-merged-20261108-r1/spec.json",
+      "bytes": 13489,
+      "sha256": "d4faca62ab412108670c99e6a615ae462575e863cc4d66f1886530f3574828b1"
+    },
+    "canonical_validation": {
+      "path": "source-validation.json",
+      "bytes": 40244,
+      "sha256": "f954289b28ac94e3945d7ffeb0efa26e851fdfdc8025988181a94bdeabe8e8ea"
+    }
+  },
+  "validation": {
+    "canonical_requests_verified": 80,
+    "raw_maxima_and_slo_values_preserved": true,
+    "canonical_hashes_checked": true,
+    "timestamp_metrics_checked": true,
+    "request_cpu_gpu_controls_checked": true,
+    "controller_integration_validated": false,
+    "canonical_merged_copies_checked": true,
+    "previous_repeat5_canonical_records_preserved": 40,
+    "original_component_manifests_rechecked": false
+  },
+  "provenance": {
+    "manifest_origin": "locally generated KVolt integration envelope; not a user-provided original manifest",
+    "provided_input_path": "reference.json",
+    "provided_file_sha256": "359fd02c609738755c87847f27b19286f45a3a7cb8d6bef8acd7c369e1c30c2b",
+    "original_array_bytes_preserved": true,
+    "canonical_validation_scope": "Read-only verification of 80 merged canonical result bytes/hashes and source-origin hash/protocol bindings, request timing and fixed CPU/default GPU controls; original component directories are unavailable and their manifest/completion hashes are inherited declarations, not newly rechecked; no prompts or output token IDs exported; no new GPU inference."
+  }
+}

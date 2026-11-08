@@ -34,45 +34,55 @@ controller work and initial K2V2 packing once. Original validation flags
 `quality_runtime_eligible=false` remain intact in provenance.
 
 The prediction bundle has no FP16 targets. The latest target source is
-[`agx2-reference-repeat5/`](agx2-reference-repeat5/). The user supplied its
+[`agx2-reference-repeat10/`](agx2-reference-repeat10/). The user supplied its
 310-byte `reference.json` on 2026-11-08; those bytes are preserved. Its eight
 rows are `[length, r_p_ttft_s, r_d_tpot_s]`, lengths 1024..8192, step 1024.
-Targets are independent maxima of TTFT and request mean TPOT over five
-requests per length (40 total): the baseline 24 plus supplement 16 requests.
-Conditions remain FP16 KV, default GPU DVFS nvhost_podgov 306..1122MHz,
-CPU2201.6MHz and EMC3199MHz. Only N>1 enters TPOT. Prefill/Decode policy
-multipliers remain 1.0. Interpolate only length; never extrapolate.
+Targets are independent maxima of TTFT and request mean TPOT over ten
+requests per length (80 total): the baseline 24, first supplement 16 and
+second supplement 40 requests. Conditions remain FP16 KV, default GPU DVFS
+nvhost_podgov 306..1122MHz, CPU2201.6MHz and EMC3199MHz. Only N>1 enters TPOT.
+Prefill/Decode policy multipliers remain 1.0. Interpolate only length; never
+extrapolate.
 
 The new `manifest.json` is a locally generated integration envelope, not a
 user-provided original manifest. It records the exact original table hash,
 source paths and hashes, context, aggregation and verification scope. The
-tracked `source-validation.json` records the 40 canonical result hashes,
+tracked `source-validation.json` records the 80 canonical result hashes,
 t0/t1/tN timestamps, N, repeat, timing metrics, per-request control checks and
-the two source runs' metadata. These were checked read-only against the AGX2
-canonical source results; the summary does not contain original request JSON,
-prompts or output token IDs. The loader requires its exact hash and byte count
-and includes it alongside `reference.json` in target `files_sha256` binding.
-This source check preserves `controller_integration_validated=false` and
-establishes no new controller, accuracy, quality, SLO or formal qualification.
+the three source runs' declared metadata. The 80 canonical result bytes and
+hashes, source-origin/protocol hash bindings, timestamps and request controls
+were checked read-only in the AGX2 merged export. The original component
+directories are unavailable; their manifest/completion hashes are inherited
+declarations and were not newly rechecked
+(`original_component_manifests_rechecked=false`). The summary does not contain
+original request JSON, prompts or output token IDs. The loader
+requires its exact hash and byte count and includes it alongside
+`reference.json` in target `files_sha256` binding. This source check preserves
+`controller_integration_validated=false` and establishes no new controller,
+accuracy, quality, SLO or formal qualification. No new GPU measurements are
+part of this registration.
 
-The older [`agx2-reference-repeat3/`](agx2-reference-repeat3/) keeps both
-original files unchanged for explicit reproduction of the three-repeat,
-24-request targets. Each version has its own trusted manifest pin and exact
-measurement context; changing a repeat count cannot authorize a new export.
+The older [`agx2-reference-repeat5/`](agx2-reference-repeat5/) keeps all three
+files unchanged for explicit reproduction of the five-repeat, 40-request
+targets and their canonical validation evidence. The older
+[`agx2-reference-repeat3/`](agx2-reference-repeat3/) keeps both original files
+unchanged for the three-repeat, 24-request targets. Each version has its own
+trusted manifest pin and exact measurement context; changing a repeat count
+cannot authorize a new export.
 
 `CompactLUTRepository` accepts only the two explicitly trusted prediction
-manifests. `--reference-lut-dir` accepts either pinned three/five-repeat
+manifests. `--reference-lut-dir` accepts either pinned three/five/ten-repeat
 `CompactReferenceRepository` or the unchanged sealed AGX2
 `MeasuredLUTRepository` for historical reproduction. Current use:
 
 ```sh
-kvolt run --lut-dir data/luts/agx2-runtime-repeat5 --reference-lut-dir data/luts/agx2-reference-repeat5 ...
-kvolt diagnose --lut-bundle data/luts/agx2-runtime-repeat5 --reference-lut-dir data/luts/agx2-reference-repeat5 ...
-python3 tools/latest_tpot_audit.py --latest-dir data/luts/agx2-runtime-repeat5 --reference-lut-dir data/luts/agx2-reference-repeat5 --output audit.json
+kvolt run --lut-dir data/luts/agx2-runtime-repeat5 --reference-lut-dir data/luts/agx2-reference-repeat10 ...
+kvolt diagnose --lut-bundle data/luts/agx2-runtime-repeat5 --reference-lut-dir data/luts/agx2-reference-repeat10 ...
+python3 tools/latest_tpot_audit.py --latest-dir data/luts/agx2-runtime-repeat5 --reference-lut-dir data/luts/agx2-reference-repeat10 --output audit.json
 ```
 
 Provenance retains complete prediction and reference manifests, including the
-locally generated five-repeat envelope, and separate target conditions. Device
+locally generated ten-repeat envelope, and separate target conditions. Device
 mismatch is calculated from their actual source devices. Matching devices establish no accuracy, SLO, quality eligibility or
 formal qualification. An existing grant cannot authorize the new source/pins.
 The sealed loader's original manifest pin and target contract remain unchanged.
@@ -81,6 +91,9 @@ Reference hashes:
 
 | File | SHA-256 |
 | --- | --- |
+| `agx2-reference-repeat10/manifest.json` | `d332875ccce626dd99700da8c7a128bf4801577333e76ee40a987f4051311e40` |
+| `agx2-reference-repeat10/reference.json` | `359fd02c609738755c87847f27b19286f45a3a7cb8d6bef8acd7c369e1c30c2b` |
+| `agx2-reference-repeat10/source-validation.json` | `f954289b28ac94e3945d7ffeb0efa26e851fdfdc8025988181a94bdeabe8e8ea` |
 | `agx2-reference-repeat5/manifest.json` | `d61c1b6a6ccd0aaa80b0cf4645702eaee09bd406dac084df70f151669a9b74ee` |
 | `agx2-reference-repeat5/reference.json` | `0892b309e9124553f0b5a1410241060648b68f5be7c9c02db7e1d3b0fd640151` |
 | `agx2-reference-repeat5/source-validation.json` | `a51bcff64f8e291d4121b0578c23ef211bad5c3e772f396ca31098d55400aa93` |

@@ -10,6 +10,7 @@ from .types import LUTError, LUTProvenance, PERFORMANCE_LENGTHS, length as valid
 
 COMPACT_REFERENCE_MANIFEST_SHA256 = '00d5112eaf9b0cdad2420b7622522c5d0913196e47681a286c99e19eeeeae15c'
 COMPACT_REFERENCE_REPEAT5_MANIFEST_SHA256 = 'd61c1b6a6ccd0aaa80b0cf4645702eaee09bd406dac084df70f151669a9b74ee'
+COMPACT_REFERENCE_REPEAT10_MANIFEST_SHA256 = 'd332875ccce626dd99700da8c7a128bf4801577333e76ee40a987f4051311e40'
 _CONTEXT = {
     'device_id': 'A2', 'model_id': 'meta-llama/Llama-3.1-8B-Instruct',
     'model_revision': '0e9e39f249a16976918f6564b8830bc894c89659',
@@ -27,6 +28,9 @@ _TRUSTED_REFERENCE_MANIFESTS = {
     COMPACT_REFERENCE_MANIFEST_SHA256: _CONTEXT,
     COMPACT_REFERENCE_REPEAT5_MANIFEST_SHA256: {
         **_CONTEXT, 'technical_repeats_per_length': 5, 'total_requests': 40,
+    },
+    COMPACT_REFERENCE_REPEAT10_MANIFEST_SHA256: {
+        **_CONTEXT, 'technical_repeats_per_length': 10, 'total_requests': 80,
     },
 }
 COMPACT_REFERENCE_MANIFEST_SHA256S = frozenset(_TRUSTED_REFERENCE_MANIFESTS)
@@ -59,7 +63,7 @@ def _manifest_contract(manifest, expected_context):
             or validation['raw_maxima_and_slo_values_preserved'] is not True
             or validation['controller_integration_validated'] is not False):
         raise LUTError('invalid compact reference source validation contract')
-    if expected_context['technical_repeats_per_length'] == 5:
+    if expected_context['technical_repeats_per_length'] in (5, 10):
         evidence = manifest['evidence_files']
         if type(evidence) is not dict or set(evidence) != {'source-validation.json'}:
             raise LUTError('compact reference requires source-validation.json evidence')
@@ -99,7 +103,7 @@ class CompactReferenceRepository:
             if type(table['bytes']) is not int or len(data) != table['bytes']:
                 raise LUTError('compact reference byte count mismatch')
             hashes = [('reference.json', table['sha256'])]
-            if expected_context['technical_repeats_per_length'] == 5:
+            if expected_context['technical_repeats_per_length'] in (5, 10):
                 name = 'source-validation.json'
                 spec = manifest['evidence_files'][name]
                 evidence_data = _read(_bundle_file(root, name))
@@ -122,7 +126,7 @@ class CompactReferenceRepository:
                 raise LUTError('incomplete compact reference length grid')
             self._prefill_target = MappingProxyType(prefill)
             self._decode_target = MappingProxyType(decode)
-            repeats = {3: 'three', 5: 'five'}[expected_context['technical_repeats_per_length']]
+            repeats = {3: 'three', 5: 'five', 10: 'ten'}[expected_context['technical_repeats_per_length']]
             self.provenance = LUTProvenance(
                 kind='measured', source_device='AGX2', source_commit=None,
                 manifest_sha256=manifest_sha256,
