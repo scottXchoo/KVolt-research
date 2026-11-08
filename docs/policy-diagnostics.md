@@ -40,18 +40,19 @@ L must be an integer in [1024,8192], Nmax in [1,512], and elapsed times must be
 nonnegative integer nanoseconds. `--max-new-tokens` defaults to 512.
 `--first-token-id` defaults to **assumed token 17**, not a generated token.
 An assumed EOS (128001,128008,128009) or Nmax=1 uses the real DC skip path:
-Quality/Decode lookup, detector initialization/detection and the DC clock do not
+Quality/Reference/Decode lookup, detector initialization/detection and the DC clock do not
 run. EOS takes precedence over Nmax=1. `--dc-elapsed-ns` may be omitted on skip;
 if supplied it is recorded as not applied. Full LUT support preflight still runs.
 An active DC without this time is rejected before source loading or lookup.
 
 After full-support preflight, PC performs its online lookups before reading the
 injected clock, with t0=0 and tp equal to the assumed PC elapsed ns. Active DC
-performs Quality, Kneedle, Decode and target queries before its injected clock,
-with t1=0 and td equal to the assumed DC elapsed ns. These are separate synthetic
-phase origins, not a request timeline. Budgets use the controllers' unchanged
-binary64 arithmetic and original candidate/energy/tie policies. No time is
-measured by this diagnostic and no value is rounded before selection.
+performs Quality, Kneedle/active G selection and Reference target lookup before
+its injected clock. With t1=0 and td equal to the assumed DC elapsed ns, it
+computes Bd=target_s-(elapsed_ns/1e9)/(Nmax-1), then queries Decode details within
+that budget. Query cost is outside the budget deduction and inside actual
+Runner t1-to-tN timing. These are separate synthetic phase origins, not a request
+timeline. No time is measured by this diagnostic and no value is rounded before selection.
 
 Each successful invocation prints one JSON record to stdout, even with
 `--output`. The schema is `kvolt.policy_diagnostic.v1`, record type
@@ -59,7 +60,9 @@ Each successful invocation prints one JSON record to stdout, even with
 and `measurements=null`. Source kind (`measured` or `synthetic`) is independent
 of these synthetic timing/token assumptions. `prefill` preserves eight candidate
 records; active `decode` preserves five raw Quality rows, Knee result/reasons,
-40 candidate records, target, budget, selected prediction, flags and reasons.
+only returned detail candidate records (1..40), target, budget, selected prediction,
+flags and reasons. `selection_rule=budget_filtered_decode` identifies this
+contract; unmarked archived traces retain historical full-40 audit semantics.
 The target/budget fields are the Method's tau_p/Bp and tau_d/Bd. A skipped DC
 retains null target/budget/elapsed/td/selection/Knee/feasibility and empty rows.
 Prediction feasibility is not an observed TTFT/TPOT SLO result.

@@ -11,7 +11,7 @@ from ..errors import ContractError
 from .types import (
     Bracket, DecodePrediction, FREQUENCIES_MHZ, LUTError, LUTProvenance,
     PERFORMANCE_LENGTHS, PrefillPrediction, QUALITY_LENGTHS, QualityPrediction,
-    finite, length as validate_length,
+    finite, group as validate_group, length as validate_length,
 )
 
 SOURCE_COMMIT = 'd6cf87a60984aa167c5b5d72de354fd3d587c2d5'
@@ -76,6 +76,49 @@ class _TabulatedLUT:
     def prefill(self, length: int) -> tuple[PrefillPrediction, ...]:
         bracket = _bracket(length, PERFORMANCE_LENGTHS)
         return tuple(PrefillPrediction(length, f, *self._pair_at(self._prefill, (f,), bracket), bracket) for f in FREQUENCIES_MHZ)
+
+    def decode_within_budget(self, length: int, groups: tuple[int, ...],
+                             budget_s: float) -> tuple[DecodePrediction, ...]:
+        """Return active budget-eligible rows, or every global fastest TPOT tie.
+
+        Interpolate TPOT first and energy only for returned rows. A negative
+        planning budget is valid and takes the global latency fallback.
+        """
+        if type(groups) is not tuple or not groups:
+            raise ContractError('Decode groups must be a nonempty immutable tuple')
+        for value in groups:
+            validate_group(value)
+        if len(set(groups)) != len(groups):
+            raise ContractError('Decode groups must be unique')
+        if type(budget_s) not in (int, float):
+            raise ContractError('Decode budget must be finite seconds/token')
+        try:
+            budget = float(budget_s)
+        except (OverflowError, ValueError) as error:
+            raise ContractError('Decode budget must be finite seconds/token') from error
+        if not math.isfinite(budget):
+            raise ContractError('Decode budget must be finite seconds/token')
+        bracket = _bracket(length, PERFORMANCE_LENGTHS)
+        times = {}
+
+        def tpot(group, frequency_mhz):
+            key = (group, frequency_mhz)
+            if key not in times:
+                times[key] = _at(self._decode[(bracket.lower, *key)][0],
+                                 self._decode[(bracket.upper, *key)][0], bracket)
+            return times[key]
+
+        pairs = tuple((group, f) for group in sorted(groups) for f in FREQUENCIES_MHZ
+                      if tpot(group, f) <= budget)
+        if not pairs:
+            all_pairs = tuple((group, f) for group in GROUPS for f in FREQUENCIES_MHZ)
+            fastest = min(tpot(*pair) for pair in all_pairs)
+            pairs = tuple(pair for pair in all_pairs if times[pair] == fastest)
+        return tuple(DecodePrediction(
+            length, group, f, times[(group, f)],
+            _at(self._decode[(bracket.lower, group, f)][1],
+                self._decode[(bracket.upper, group, f)][1], bracket), bracket)
+            for group, f in pairs)
 
     def decode(self, length: int) -> tuple[DecodePrediction, ...]:
         bracket = _bracket(length, PERFORMANCE_LENGTHS)

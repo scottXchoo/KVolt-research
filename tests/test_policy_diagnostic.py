@@ -52,7 +52,7 @@ def test_full_trace_and_independent_argmin(fake_detector, capsys):
     assert data['measurements'] is None
     assert data['source']['kind'] == 'synthetic'
     pc, dc = data['prefill'], data['decode']
-    assert len(pc['candidates']) == 8 and len(dc['candidates']) == 40
+    assert len(pc['candidates']) == 8 and len(dc['candidates']) == 8
     assert len(dc['quality']) == 5
     assert pc['elapsed_ns'] == 1000000 and dc['elapsed_ns'] == 2000000
     assert pc['budget_s'] == pc['target_s'] - .001
@@ -60,6 +60,7 @@ def test_full_trace_and_independent_argmin(fake_detector, capsys):
     prefills = [c['prediction'] for c in pc['candidates'] if c['meets_budget']]
     assert pc['selected']['frequency_mhz'] == 510
     assert dc['selected']['group'] == 32 and dc['selected']['frequency_mhz'] == 408
+    assert dc['selection_rule'] == 'budget_filtered_decode'
     assert dc['knee']['status'] == 'not_found' and dc['knee']['groups'] == []
     assert all(c['active_knee'] == (c['prediction']['group'] == 32) for c in dc['candidates'])
     assert pc['selected'] == min(prefills, key=lambda p: (p['energy_j'], p['ttft_s'], p['frequency_mhz']))
@@ -88,6 +89,8 @@ def test_skip_without_detector_quality_decode_or_clock(monkeypatch, capsys, flag
             pytest.fail('quality on skip')
         def decode(self, length):
             pytest.fail('decode on skip')
+        def decode_within_budget(self, length, groups, budget_s):
+            pytest.fail('conditional decode lookup on skip')
         def decode_target(self, length):
             pytest.fail('decode target on skip')
     monkeypatch.setattr(cli, '_build_repository', lambda args: Spy())
@@ -211,7 +214,7 @@ def test_actual_cli_mock_scenarios(scenario):
     assert data['source']['kind']=='synthetic'
     assert data['source']['metadata']['scenario']==scenario
     assert data['runtime']['loaded_versions']=={'numpy':'1.26.4','scipy':'1.15.3','kneed':'0.9.0'}
-    assert len(data['decode']['candidates'])==40
+    assert 1 <= len(data['decode']['candidates']) <= 40
     if scenario in ('flat_quality','exact_ties'):
         assert data['decode']['knee']['reason']=='flat_quality'
     if scenario=='exact_ties':
@@ -234,7 +237,7 @@ def test_actual_cli_measured_bundle():
     assert data['source']['metadata']['quality']['runtime_validation_required'] is True
     assert 'entries' not in data['source']['metadata']['quality']
     assert data['measurements'] is None and data['synthetic_assumptions']
-    assert len(data['prefill']['candidates'])==8 and len(data['decode']['candidates'])==40
+    assert len(data['prefill']['candidates'])==8 and 1 <= len(data['decode']['candidates']) <= 40
 
 
 def test_online_order_and_assumed_clock_boundaries(monkeypatch,capsys):
@@ -249,7 +252,9 @@ def test_online_order_and_assumed_clock_boundaries(monkeypatch,capsys):
         def quality(self,L):
             events.append('quality'); return super().quality(L)
         def decode(self,L):
-            events.append('decode'); return super().decode(L)
+            pytest.fail('online full Decode lookup')
+        def decode_within_budget(self,L,groups,budget_s):
+            events.append('decode_within_budget'); return super().decode_within_budget(L,groups,budget_s)
         def decode_target(self,L):
             events.append('decode_target'); return super().decode_target(L)
     class Detector:
@@ -259,7 +264,7 @@ def test_online_order_and_assumed_clock_boundaries(monkeypatch,capsys):
     monkeypatch.setattr(cli,'_new_knee_adapter',lambda: Detector())
     assert cli.main(arguments())==0
     data=report(capsys)
-    assert events==['preflight','prefill','prefill_target','quality','detect','decode','decode_target']
+    assert events==['preflight','prefill','prefill_target','quality','detect','decode_target','decode_within_budget']
     assert data['prefill']['t0_ns']==0 and data['prefill']['tp_ns']==1000000
     assert data['decode']['t1_ns']==0 and data['decode']['td_ns']==2000000
 

@@ -12,8 +12,8 @@ from .types import (
 
 def _validate_decode(predictions, requested_length):
     expected = {(g, f) for g in GROUPS for f in FREQUENCIES_MHZ}
-    if type(predictions) is not tuple or len(predictions) != len(expected):
-        raise ContractError('Decode LUT must return an immutable tuple of all 40 combinations')
+    if type(predictions) is not tuple or not 1 <= len(predictions) <= len(expected):
+        raise ContractError('Decode budget query must return an immutable tuple of 1..40 rows')
     normalized = []
     for row in predictions:
         if not isinstance(row, DecodePrediction):
@@ -27,13 +27,16 @@ def _validate_decode(predictions, requested_length):
         if prediction.length != requested_length:
             raise ContractError('Decode LUT rows must match requested L')
         normalized.append(prediction)
-    if {(row.group, row.frequency_mhz) for row in normalized} != expected:
-        raise ContractError('Decode LUT must contain every original (G,f) exactly once')
+    pairs = {(row.group, row.frequency_mhz) for row in normalized}
+    if len(pairs) != len(normalized) or not pairs <= expected:
+        raise ContractError('Decode budget query must return unique original (G,f) pairs')
+    if any(row.bracket != normalized[0].bracket for row in normalized):
+        raise ContractError('Decode budget query rows must share an interpolation bracket')
     return tuple(sorted(normalized, key=lambda row: (row.group, row.frequency_mhz)))
 
 
 class DecodeController:
-    """Query Q, detect Knees, query all Decode rows and target, then read td.
+    """Query Q/Knees and Reference, record td/budget, then query Decode details.
 
     Runner preflight remains outside this online phase. This controller neither
     caches per-request interpolation/detection nor changes device state.
@@ -60,26 +63,30 @@ class DecodeController:
         if not isinstance(knee, KneeResult):
             raise ContractError('Knee adapter must return KneeResult')
         KneeResult(knee.status, knee.groups, knee.reason, knee.error_type, knee.error_message)
-        predictions = _validate_decode(self.repo.decode(length), length)
-        target = finite(self.repo.decode_target(length), 'Decode target seconds/token', positive=True)
-        td_ns = self.clock()
-        elapsed_ns = elapsed_since(t1_ns, td_ns)
-        budget = target - (elapsed_ns / 1_000_000_000) / (nmax - 1)
-
-        scores = {row.group: row.score for row in quality}
         if knee.status == 'found':
             active = set(knee.groups)
         elif knee.status == 'not_found':
             active = {sorted(GROUPS)[len(GROUPS) // 2]}
         else:
             active = set(GROUPS)
+        target = finite(self.repo.decode_target(length), 'Decode target seconds/token', positive=True)
+        td_ns = self.clock()
+        elapsed_ns = elapsed_since(t1_ns, td_ns)
+        budget = target - (elapsed_ns / 1_000_000_000) / (nmax - 1)
+        predictions = _validate_decode(
+            self.repo.decode_within_budget(length, tuple(sorted(active)), budget), length)
+        scores = {row.group: row.score for row in quality}
         eligible = tuple(row for row in predictions if row.group in active and row.tpot_s <= budget)
         if eligible:
+            if len(eligible) != len(predictions):
+                raise ContractError('Decode budget query mixed eligible and ineligible rows')
             selected = min(eligible, key=lambda row: (
                 row.energy_j_per_token, -scores[row.group], row.tpot_s,
                 row.group, row.frequency_mhz))
             selection_path = 'energy_min'
         else:
+            if any(row.tpot_s != predictions[0].tpot_s for row in predictions):
+                raise ContractError('Decode fallback query must return only exact fastest TPOT ties')
             selected = min(predictions, key=lambda row: (
                 row.tpot_s, -scores[row.group], row.energy_j_per_token,
                 row.group, row.frequency_mhz))

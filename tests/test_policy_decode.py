@@ -17,6 +17,8 @@ class Repo:
     def __init__(self, scores=(0.9, 0.8, 0.7, 0.6, 0.5), target=2.0):
         self.calls = []
         self.target = target
+        self.query_result = None
+        self.query_args = None
         self.qualities = tuple(QualityPrediction(1024, g, q, Bracket(1024, 1024, 0))
                                for g, q in zip(GROUPS, scores))
         self.rows = tuple(DecodePrediction(1024, g, f, 1.0, 10.0, Bracket(1024, 1024, 0))
@@ -26,13 +28,27 @@ class Repo:
         self.calls.append('quality')
         return self.qualities
 
+    def decode_lookup(self, length):
+        pytest.fail('DC used the full combined Decode API')
+
     def decode(self, length):
-        self.calls.append('decode')
-        return self.rows
+        pytest.fail('DC used the full Decode API')
 
     def decode_target(self, length):
         self.calls.append('target')
         return self.target
+
+    def decode_within_budget(self, length, groups, budget_s):
+        self.calls.append('query')
+        self.query_args = (length, groups, budget_s)
+        if self.query_result is not None:
+            return self.query_result
+        eligible = tuple(row for row in self.rows if
+                         row.group in groups and float(row.tpot_s) <= budget_s)
+        if eligible:
+            return eligible
+        fastest = min(float(row.tpot_s) for row in self.rows)
+        return tuple(row for row in self.rows if float(row.tpot_s) == fastest)
 
     def cell(self, group, frequency=408, **changes):
         self.rows = tuple(replace(row, **changes) if (row.group, row.frequency_mhz) ==
@@ -67,15 +83,14 @@ def test_normal_energy_choice_and_full_explanation():
     assert result.selected_quality == 0.8
     assert result.status == 'selected' and result.selection_path == 'energy_min'
     assert result.predicted_feasible is True
-    assert len(result.candidates) == 40 and len(result.quality) == 5
+    assert len(result.candidates) == 16 and len(result.quality) == 5
     assert sum(c.selected for c in result.candidates) == 1
-    outside = next(c for c in result.candidates if c.prediction.group == 128)
-    assert (outside.active_knee, outside.meets_budget, outside.eligible) == (False, True, False)
-    assert 'knee_excluded' in outside.reasons
+    assert all(c.active_knee and c.meets_budget and c.eligible for c in result.candidates)
+    assert {c.prediction.group for c in result.candidates} == {8, 16}
 
 
 @pytest.mark.parametrize('flat', [False, True], ids=['no_knee', 'flat_quality'])
-def test_normal_miss_uses_median_group_and_preserves_detection_and_full_trace(flat):
+def test_normal_miss_uses_median_group_and_preserves_detection_and_queried_trace(flat):
     repo = Repo(scores=(0.7,) * 5 if flat else (0.9, 0.8, 0.7, 0.6, 0.5))
     calls = []
     class EmptyLocator:
@@ -95,17 +110,16 @@ def test_normal_miss_uses_median_group_and_preserves_detection_and_full_trace(fl
     assert result.selected_quality == 0.7
     assert result.knee == KneeResult('not_found', reason='flat_quality' if flat else 'no_knee')
     assert len(calls) == (0 if flat else 1)
-    assert len(result.candidates) == 40 and sum(c.selected for c in result.candidates) == 1
-    assert sum(c.active_knee for c in result.candidates) == 8
+    assert len(result.candidates) == 7 and sum(c.selected for c in result.candidates) == 1
+    assert sum(c.active_knee for c in result.candidates) == 7
     assert sum(c.eligible for c in result.candidates) == 7
     for candidate in result.candidates:
         active = candidate.prediction.group == 32
         assert candidate.active_knee is active
         assert candidate.eligible is (active and candidate.meets_budget)
         assert ('knee_excluded' in candidate.reasons) is (not active)
-    rejected = next(c for c in result.candidates if
-                    (c.prediction.group, c.prediction.frequency_mhz) == (32, 408))
-    assert rejected.meets_budget is False and 'time_budget_exceeded' in rejected.reasons
+    assert all(c.prediction.frequency_mhz != 408 for c in result.candidates)
+    assert repo.query_args == (1024, (32,), 2.0)
 
 
 def test_detector_recovery_applies_time_condition_to_all_groups():
@@ -126,8 +140,8 @@ def test_empty_median_time_set_uses_global_latency_fallback(reason):
     assert pair(result) == (128, 1020)
     assert result.selection_path == 'latency_fallback' and result.predicted_feasible is True
     assert result.knee == KneeResult('not_found', reason=reason)
-    assert len(result.candidates) == 40 and not any(c.eligible for c in result.candidates)
-    assert sum(c.active_knee for c in result.candidates) == 8
+    assert len(result.candidates) == 1 and not any(c.eligible for c in result.candidates)
+    assert sum(c.active_knee for c in result.candidates) == 0
     selected = next(c for c in result.candidates if c.selected)
     assert selected.active_knee is False and selected.eligible is False
     assert selected.meets_budget is True
@@ -175,7 +189,8 @@ def test_phase_order_and_detector_failure_cost_included_in_clock():
         repo.calls.append('clock')
         return 1_000_000_100
     result = DecodeController(repo, KneeAdapter(broken), clock=clock).choose(1024, 2, 123, 100)
-    assert repo.calls == ['quality', 'knee', 'decode', 'target', 'clock']
+    assert repo.calls == ['quality', 'knee', 'target', 'clock', 'query']
+    assert repo.query_args == (1024, GROUPS, 1.0)
     assert result.knee.status == 'error_recovered'
     assert result.elapsed_ns == 1_000_000_000 and result.budget_s == 1.0
 
@@ -208,9 +223,11 @@ def test_invalid_inputs_fail_even_before_skip(args):
 
 
 @pytest.mark.parametrize('now', [99, True, 100.0, None])
-def test_invalid_or_backward_clock_is_fatal(now):
+def test_invalid_or_backward_clock_is_fatal_before_decode_query(now):
+    repo = Repo()
     with pytest.raises(ContractError):
-        DecodeController(Repo(), Adapter(), clock=lambda: now).choose(1024, 128, 123, 100)
+        DecodeController(repo, Adapter(), clock=lambda: now).choose(1024, 128, 123, 100)
+    assert repo.calls == ['quality', 'target']
 
 
 @pytest.mark.parametrize('target', [0, -1, float('nan'), float('inf'), True, '1'])
@@ -218,28 +235,21 @@ def test_invalid_target_is_fatal_before_clock(target):
     repo = Repo(target=target)
     with pytest.raises(ContractError):
         DecodeController(repo, Adapter(), clock=lambda: pytest.fail('invalid target')).choose(1024, 2, 123, 0)
+    assert repo.calls == ['quality', 'target']
 
 
-@pytest.mark.parametrize('mode', ['missing_quality', 'duplicate_quality', 'wrong_quality_length',
-                                 'missing_decode', 'duplicate_decode', 'wrong_decode_length', 'corrupt_decode'])
-def test_all_five_quality_and_forty_decode_rows_are_mandatory(mode):
+@pytest.mark.parametrize('mode', ['missing_quality', 'duplicate_quality', 'wrong_quality_length'])
+def test_all_five_quality_rows_are_mandatory(mode):
     repo = Repo()
     if mode == 'missing_quality':
         repo.qualities = repo.qualities[:-1]
     elif mode == 'duplicate_quality':
         repo.qualities = (repo.qualities[0],) * 5
-    elif mode == 'wrong_quality_length':
-        repo.qualities = (replace(repo.qualities[0], length=1536, bracket=Bracket(1536, 1536, 0)),) + repo.qualities[1:]
-    elif mode == 'missing_decode':
-        repo.rows = repo.rows[:-1]
-    elif mode == 'duplicate_decode':
-        repo.rows = (repo.rows[0],) * 40
-    elif mode == 'wrong_decode_length':
-        repo.rows = (replace(repo.rows[0], length=1536, bracket=Bracket(1536, 1536, 0)),) + repo.rows[1:]
     else:
-        object.__setattr__(repo.rows[-1], 'energy_j_per_token', float('nan'))
+        repo.qualities = (replace(repo.qualities[0], length=1536, bracket=Bracket(1536, 1536, 0)),) + repo.qualities[1:]
     with pytest.raises(ContractError):
         choose(repo)
+    assert repo.calls == ['quality']
 
 
 @pytest.mark.parametrize('fallback', [False, True])
@@ -305,18 +315,21 @@ def test_canonical_quality_is_used_for_detector_selection_and_trace_without_sour
     assert type(source.score) is int and type(source.bracket.weight) is int
 
 
-@pytest.mark.parametrize('table', ['quality', 'decode'])
+@pytest.mark.parametrize('table', ['quality', 'query'])
 @pytest.mark.parametrize('field,value', [('lower', 1024.0), ('upper', 8193), ('weight', False)])
-def test_corrupt_nested_bracket_is_fatal_before_phase_clock(table, field, value):
+def test_corrupt_nested_bracket_fails_at_its_lookup_boundary(table, field, value):
     repo = Repo()
     rows = repo.qualities if table == 'quality' else repo.rows
     object.__setattr__(rows[0].bracket, field, value)
+    repo.query_result = (repo.rows[0],)
     events = []
+    def clock():
+        events.append('clock')
+        return 100
     with pytest.raises(ContractError):
-        DecodeController(repo, Adapter(events=events), clock=lambda: pytest.fail('invalid bracket')).choose(
-            1024, 128, 123, 100)
-    assert repo.calls == (['quality'] if table == 'quality' else ['quality', 'decode'])
-    assert events == ([] if table == 'quality' else ['knee'])
+        DecodeController(repo, Adapter(events=events), clock=clock).choose(1024, 128, 123, 100)
+    assert repo.calls == (['quality'] if table == 'quality' else ['quality', 'target', 'query'])
+    assert events == ([] if table == 'quality' else ['knee', 'clock'])
 
 
 def test_budget_boundary_is_exact_and_input_order_does_not_change_choice():
@@ -361,4 +374,66 @@ def test_sealed_published_table_manual_choices_with_explicit_no_knee():
     for length, expected_pair, path in expected:
         result = controller.choose(length, 128, 123, 100)
         assert pair(result) == expected_pair and result.selection_path == path
-        assert len(result.candidates) == 40
+        assert 1 <= len(result.candidates) <= 8
+        assert all(c.eligible for c in result.candidates) if path == 'energy_min' else not any(c.eligible for c in result.candidates)
+
+
+@pytest.mark.parametrize('bad', [object(), [], {}, (), None])
+def test_foreign_or_empty_query_result_is_rejected_after_clock(bad):
+    repo = Repo()
+    repo.decode_within_budget = lambda *args: bad
+    events = []
+    with pytest.raises(ContractError):
+        DecodeController(repo, Adapter(), clock=lambda: events.append('clock') or 100).choose(
+            1024, 128, 123, 100)
+    assert events == ['clock']
+
+
+@pytest.mark.parametrize('mode', ['duplicate', 'too_many', 'foreign_row', 'wrong_length',
+                                 'bad_group', 'bad_frequency', 'bad_tpot', 'bad_energy',
+                                 'bad_bracket', 'inconsistent_brackets', 'mixed_eligibility',
+                                 'unequal_fallback_times'])
+def test_corrupt_query_rows_are_rejected_without_silent_filtering(mode):
+    repo = Repo()
+    row = next(row for row in repo.rows if (row.group, row.frequency_mhz) == (32, 408))
+    if mode == 'duplicate':
+        rows = (row, row)
+    elif mode == 'too_many':
+        rows = (row,) * 41
+    elif mode == 'foreign_row':
+        rows = (object(),)
+    elif mode == 'mixed_eligibility':
+        rows = (row, repo.rows[0])
+    elif mode == 'unequal_fallback_times':
+        rows = (replace(repo.rows[0], tpot_s=0.2), replace(repo.rows[1], tpot_s=0.3))
+    elif mode == 'inconsistent_brackets':
+        rows = (row, replace(repo.rows[1], bracket=Bracket(1024, 2048, 0)))
+    else:
+        fields = {'wrong_length': ('length', 2048), 'bad_group': ('group', 7),
+                  'bad_frequency': ('frequency_mhz', 409), 'bad_tpot': ('tpot_s', math.nan),
+                  'bad_energy': ('energy_j_per_token', math.inf), 'bad_bracket': ('bracket', None)}
+        field, value = fields[mode]
+        object.__setattr__(row, field, value)
+        rows = (row,)
+    repo.query_result = rows
+    with pytest.raises(ContractError):
+        choose(repo)
+    assert repo.calls == ['quality', 'target', 'query']
+
+
+@pytest.mark.parametrize('result,expected_groups', [
+    (KneeResult('found', (8, 64)), (8, 64)),
+    (KneeResult('not_found', reason='no_knee'), (32,)),
+    (KneeResult('error_recovered', reason='detector_error'), GROUPS),
+])
+def test_target_clock_then_conditional_query_receives_active_groups_and_budget(result, expected_groups):
+    repo = Repo(target=2)
+    def clock():
+        repo.calls.append('clock')
+        assert repo.calls == ['quality', 'knee', 'target', 'clock']
+        return 1_000_000_100
+    decision = DecodeController(repo, Adapter(result, repo.calls), clock=clock).choose(1024, 2, 123, 100)
+    assert repo.calls == ['quality', 'knee', 'target', 'clock', 'query']
+    assert repo.query_args == (1024, expected_groups, 1.0)
+    assert decision.elapsed_ns == 1_000_000_000 and decision.budget_s == 1.0
+    assert decision.knee == result

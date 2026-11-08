@@ -188,9 +188,75 @@ def close_energy(actual, exact):
     require(abs(actual-expected) <= max(1e-10, abs(expected)*1e-12), 'independent energy mismatch')
 
 
+def _audit_budget_decode(dc, request, candidates, groups, quality, repository):
+    """Check returned Decode details; source evidence proves the complete set."""
+    require(type(dc.get('candidates')) is list and 1 <= len(candidates) <= 40
+            and all(type(row) is dict for row in candidates), 'Decode candidate coverage')
+    require(all(type(row.get('group')) is int and row['group'] in GROUPS
+                and type(row.get('frequency_mhz')) is int and row['frequency_mhz'] in FREQUENCIES
+                for row in candidates), 'invalid Decode candidate identifiers')
+    pairs = [(row['group'], row['frequency_mhz']) for row in candidates]
+    require(pairs == sorted(set(pairs)), 'Decode candidate coverage')
+    require(all(type(value) in (int, float) and math.isfinite(value) and 0 <= value <= 1
+                for value in quality.values()), 'invalid Decode quality')
+    brackets = []
+    for row in candidates:
+        require(set(row) == {'length', 'group', 'frequency_mhz', 'tpot_s', 'energy_j_per_token', 'bracket'}
+                and type(row['length']) is int and row['length'] == request['length'], 'invalid Decode prediction')
+        require(type(row['tpot_s']) in (int, float) and math.isfinite(row['tpot_s']) and row['tpot_s'] > 0
+                and type(row['energy_j_per_token']) in (int, float)
+                and math.isfinite(row['energy_j_per_token']) and row['energy_j_per_token'] >= 0,
+                'queried Decode metrics missing or invalid')
+        bracket = row['bracket']
+        require(type(bracket) is dict and set(bracket) == {'lower', 'upper', 'weight'}, 'invalid Decode bracket')
+        lo, hi, weight = bracket['lower'], bracket['upper'], bracket['weight']
+        require(type(lo) is int and type(hi) is int and lo in range(1024, 8193, 1024)
+                and hi in range(1024, 8193, 1024) and lo <= row['length'] <= hi
+                and type(weight) in (int, float) and math.isfinite(weight)
+                and weight == (0.0 if lo == hi else (row['length']-lo)/(hi-lo)), 'invalid Decode bracket')
+        brackets.append(bracket)
+    require(all(bracket == brackets[0] for bracket in brackets), 'Decode bracket mismatch')
+    eligible = [row for row in candidates if row['group'] in groups and row['tpot_s'] <= dc['budget_s']]
+    require(len(eligible) == len(candidates) if eligible else len({row['tpot_s'] for row in candidates}) == 1,
+            'Decode budget lookup candidate evidence')
+    # A sparse record alone cannot prove omitted eligible rows or global minima.
+    if repository is not None:
+        full = [asdict(row) for row in repository.decode(request['length'])]
+        expected = [row for row in full if row['group'] in groups and row['tpot_s'] <= dc['budget_s']]
+        if not expected:
+            fastest = min(row['tpot_s'] for row in full)
+            expected = [row for row in full if row['tpot_s'] == fastest]
+        require(canonical_json(candidates) == canonical_json(expected)
+                and canonical_json(dc['quality']) == canonical_json([asdict(row) for row in repository.quality(request['length'])])
+                and dc['target_s'] == repository.decode_target(request['length']),
+                'Decode predictions/quality/target differ from sealed LUT')
+    require(type(dc.get('selected')) is dict
+            and canonical_json(dc['selected']) in {canonical_json(row) for row in candidates},
+            'DC selected prediction evidence')
+    require(dc.get('selected_quality') == quality[dc['selected']['group']], 'DC selected quality')
+    require(type(dc.get('predicted_feasible')) is bool
+            and dc['predicted_feasible'] == (dc['selected']['tpot_s'] <= dc['budget_s']), 'DC predicted feasibility')
+    require(sum(record.get('selected') is True for record in dc['candidates']) == 1, 'DC selected candidate evidence')
+    for record in dc['candidates']:
+        row = record['prediction']
+        active, meets = row['group'] in groups, row['tpot_s'] <= dc['budget_s']
+        selected = row == dc['selected']
+        reasons = ([] if active else ['knee_excluded']) + ([] if meets else ['time_budget_exceeded'])
+        reasons += ([] if selected else ['not_selected'])
+        if selected and not eligible:
+            reasons.append('latency_fallback')
+        require(type(record.get('quality')) in (int, float) and record['quality'] == quality[row['group']]
+                and type(record.get('active_knee')) is bool and record['active_knee'] == active
+                and type(record.get('meets_budget')) is bool and record['meets_budget'] == meets
+                and type(record.get('eligible')) is bool and record['eligible'] == (active and meets)
+                and type(record.get('selected')) is bool and record['selected'] == selected
+                and record.get('reasons') == reasons, 'DC candidate flags/reasons')
+
+
 def audit_policy(result, repository=None):
     pc, dc = result['decisions']['prefill'], result['decisions']['decode']
     timing, request = result['timing'], result['request']
+    require('selection_rule' not in dc or dc['selection_rule'] == 'budget_filtered_decode', 'unknown DC selection rule')
     candidates = [row['prediction'] for row in pc['candidates']]
     require(all(row['length'] == request['length'] for row in candidates), 'Prefill LUT length mismatch')
     require(len(candidates) == 8 and {row['frequency_mhz'] for row in candidates} == FREQUENCIES,
@@ -222,14 +288,19 @@ def audit_policy(result, repository=None):
                 and bool(dc['knee']['groups']) == (dc['knee']['status'] == 'found'), 'invalid Knee status/groups')
         candidates = [row['prediction'] for row in dc['candidates']]
         require(all(row['length'] == request['length'] for row in candidates), 'Decode LUT length mismatch')
-        if repository is not None:
-            require(canonical_json(candidates) == canonical_json([asdict(row) for row in repository.decode(request['length'])])
-                    and canonical_json(dc['quality']) == canonical_json([asdict(row) for row in repository.quality(request['length'])])
-                    and dc['target_s'] == repository.decode_target(request['length']), 'Decode predictions/quality/target differ from sealed LUT')
-        require(len(candidates) == 40 and {(row['group'], row['frequency_mhz']) for row in candidates}
-                == {(g, f) for g in GROUPS for f in FREQUENCIES},
-                'Decode candidate coverage')
         groups = dc['knee']['groups'] if dc['knee']['status'] == 'found' else q
+        if dc.get('selection_rule') == 'budget_filtered_decode':
+            if dc['knee']['status'] == 'not_found':
+                groups = (sorted(GROUPS)[len(GROUPS)//2],)
+            _audit_budget_decode(dc, request, candidates, groups, q, repository)
+        else:
+            if repository is not None:
+                require(canonical_json(candidates) == canonical_json([asdict(row) for row in repository.decode(request['length'])])
+                        and canonical_json(dc['quality']) == canonical_json([asdict(row) for row in repository.quality(request['length'])])
+                        and dc['target_s'] == repository.decode_target(request['length']), 'Decode predictions/quality/target differ from sealed LUT')
+            require(len(candidates) == 40 and {(row['group'], row['frequency_mhz']) for row in candidates}
+                    == {(g, f) for g in GROUPS for f in FREQUENCIES},
+                    'Decode candidate coverage')
         active = [row for row in candidates if row['group'] in groups and row['tpot_s'] <= dc['budget_s']]
         key = (lambda row: (row['energy_j_per_token'], -q[row['group']], row['tpot_s'], row['group'], row['frequency_mhz'])) if active else (
             lambda row: (row['tpot_s'], -q[row['group']], row['energy_j_per_token'], row['group'], row['frequency_mhz']))

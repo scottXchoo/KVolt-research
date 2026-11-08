@@ -215,7 +215,9 @@ def test_decision_serialization_follows_final_token_without_changing_measurement
     assert all(time >= result['timing']['tN_ns'] and n == 2 for _, time, n in serialized)
     assert result['timing']['ttft_s'] < 1 and result['timing']['mean_tpot_s'] < 1
     assert len(result['decisions']['prefill']['candidates']) == 8
-    assert len(result['decisions']['decode']['candidates']) == 40
+    # Recovery activates all G, but only 33 combinations meet this budget.
+    assert len(result['decisions']['decode']['candidates']) == 33
+    assert all(row['eligible'] for row in result['decisions']['decode']['candidates'])
     assert result['events'] == [{'kind': 'knee_error_recovered', **result['decisions']['decode']['knee']}]
     assert backend.caches[0].format is CacheFormat.RELEASED
 
@@ -232,7 +234,7 @@ def test_failed_generation_preserves_selected_decisions_and_stage_bounds(tmp_pat
     if failure == 'prefill':
         assert dc is None and stages == {'initial_pack': None, 'first_decode': None}
     else:
-        assert len(dc['candidates']) == 40 and dc['selected'] is not None
+        assert len(dc['candidates']) == 8 and dc['selected'] is not None
         assert result['timing']['t1_ns'] <= stages['initial_pack']['start_ns']
         assert stages['initial_pack']['start_ns'] < stages['initial_pack']['end_ns']
         if failure == 'pack':
@@ -327,7 +329,7 @@ def test_signal_stops_after_current_forward_preserves_prefix(tmp_path, stop_at, 
         assert first['decisions']['decode'] is None
         assert stages == {'initial_pack': None, 'first_decode': None}
     else:
-        assert len(first['decisions']['decode']['candidates']) == 40
+        assert len(first['decisions']['decode']['candidates']) == 8
         assert stages['initial_pack']['start_ns'] < stages['initial_pack']['end_ns']
         assert stages['first_decode']['start_ns'] < stages['first_decode']['end_ns']
     assert session['results'][1]['generation']['status'] == 'not_run'
@@ -344,7 +346,7 @@ def test_signal_inside_request_pack_preserves_decisions_and_skips_decode(tmp_pat
     session = runner.run(prepared, options)
     result = session['results'][0]
     assert session['exit_code'] == 130 and result['generation']['status'] == 'interrupted'
-    assert len(result['decisions']['decode']['candidates']) == 40
+    assert len(result['decisions']['decode']['candidates']) == 8
     stages = result['generation']['stage_timing']
     assert stages['initial_pack']['start_ns'] < stages['initial_pack']['end_ns']
     assert stages['first_decode'] is None and 'decode' not in events
@@ -500,3 +502,26 @@ def test_unverified_prepare_apply_receipt_blocks_following_gpu_work(tmp_path, wa
     assert 'decode' not in events
     assert not any(isinstance(event, tuple) and event[0] == 'pack' for event in events)
     assert events[-1] == 'restore'
+
+
+def test_decode_query_cost_is_after_budget_clock_but_inside_actual_decode_interval(tmp_path):
+    runner, prepared, options, _, _, _, _ = setup(tmp_path)
+    repo = runner.repo
+    query = repo.decode_within_budget
+    observed = []
+    def delayed_query(length, groups, budget_s):
+        observed.append((runner.clock.now, budget_s))
+        runner.clock.now += 2_000_000_000
+        return query(length, groups, budget_s)
+    repo.decode_within_budget = delayed_query
+    session = runner.run(prepared, options)
+    assert session['exit_code'] == 0
+    result = session['results'][0]
+    decision, timing = result['decisions']['decode'], result['timing']
+    assert len(observed) == 1 and observed[0][0] == decision['td_ns']
+    assert observed[0][1] == decision['budget_s']
+    assert decision['elapsed_ns'] == decision['td_ns'] - timing['t1_ns']
+    assert decision['budget_s'] == decision['target_s'] - decision['elapsed_ns'] / 1e9 / 2
+    assert timing['tN_ns'] - decision['td_ns'] >= 2_000_000_000
+    assert timing['mean_tpot_s'] == (timing['tN_ns'] - timing['t1_ns']) / 2e9
+    assert timing['mean_tpot_s'] >= 1

@@ -78,6 +78,18 @@ is validated at construction. `preflight(L)` validates integer length support
 without calling online lookup, interpolation or detection. Full support is
 required even when a later controller skips Decode for Nmax=1 or first EOS.
 
+Online DC queries `quality(L)` and Knee first, then `decode_target(L)`, records
+td and computes Bd before calling `decode_within_budget(L, groups, budget_s)`.
+The latter accepts finite signed budgets and a nonempty tuple of unique
+original G, canonicalized in sorted order. It interpolates active-G TPOT first
+and returns every TPOT <= Bd row; if none qualify, it scans the remaining global combinations and returns
+all exact minimum-TPOT ties. TPOT probes are reused within the request; energies
+are interpolated only for returned rows. The result is an immutable tuple of
+full `DecodePrediction` details, with no target query inside this API. Full
+source-grid constructor/preflight validation remains mandatory. No G/f
+interpolation, extrapolation, approximate boundary or missing-value substitution
+is introduced. See [DC order and budget](policy-decode.md).
+
 Online methods are `prefill(L)`, `quality(L)`, `decode(L)`, `prefill_target(L)`
 and `decode_target(L)`. Predictions are immutable and retain the request length,
 original candidate and `Bracket(lower, upper, weight)`. Exact knots return the

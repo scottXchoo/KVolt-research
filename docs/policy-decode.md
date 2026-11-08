@@ -36,27 +36,50 @@ calls no repository method, detector or clock. Selection, target, budget, elapse
 td, Knee and feasibility are null; Quality and candidates are empty. It preserves
 the supplied t1.
 
-The active online order is Quality lookup, Knee detection, all 40 Decode lookup,
-Decode target lookup, td clock, elapsed/budget calculation, then selection:
+The active online order is Quality lookup, Knee detection and active G selection,
+`repo.decode_target(L)` Reference lookup, td clock, elapsed/budget calculation,
+`repo.decode_within_budget(L, groups, budget_s)`, then energy selection:
 
 ```python
 elapsed_ns = td_ns - t1_ns
 budget_s = target_s - (elapsed_ns / 1_000_000_000) / (nmax - 1)
 ```
 
-Integer subtraction precedes conversion to seconds. Backwards or noninteger
-clocks are fatal. Negative budgets are preserved. Failed detection/recovery costs
-remain before td and therefore in elapsed time. Full support preflight belongs
-to Runner; it must not move online interpolation/detection before the first token.
-DC validates the actual five Quality and 40 Decode rows and positive target, even
-with an injected repository. It does not filter away missing or invalid rows.
+This 2026-11-08 user revision supersedes Method's Decode-before-td order.
+Integer subtraction precedes conversion to seconds. The positive finite target
+is validated before td; backwards or noninteger clocks fail before the Decode
+query. Negative budgets are preserved. Failed detection/recovery costs remain
+before td. Conditional Decode lookup and selection costs occur after td, so Bd
+does not subtract them, while actual Runner t1-to-tN timing still includes them.
+Bd is a planning rule, not an actual SLO upper bound. Full support preflight
+belongs to Runner and must not move online interpolation/detection before the
+first token.
+
+The conditional query interpolates TPOT for active G first and returns all rows
+with TPOT <= Bd, interpolating energy only for those rows. If none pass, it
+examines the remaining global candidates, reuses TPOT probes, and returns all
+exact global minimum-TPOT ties with their energies. It never queries energy for
+rejected rows or re-queries all details to build a trace. Existing full Decode queries remain available for offline comparisons.
+
+DC validates an immutable nonempty tuple of at most 40 unique original (G,f)
+rows, requested L, containing shared brackets and finite metrics. A normal
+return must consist entirely of active/time-eligible rows; a fallback return
+must contain no eligible rows and only equal TPOT values. Mixed eligibility,
+unequal fallback times and malformed rows fail after td instead of being
+silently filtered. Completeness and global minimality belong to the repository
+query/preflight contract; the controller cannot establish omitted candidates
+without defeating conditional lookup.
+Offline source-backed auditing independently evaluates the full 40-row grid to
+prove returned-set completeness, global fastest ties and the selected argmin.
+An audit without the repository can check only internal trace consistency.
 Validation constructs fresh `Bracket` and prediction objects, then uses those
 canonical copies for detection, comparisons and returned traces. It revalidates
 nested bracket endpoints and weight, normalizes accepted numeric metrics to
 binary64, and leaves foreign source objects unchanged. Thus a foreign integer
 `2**53+1` compares as its binary64 value `float(2**53)`, preserving the exact-tie
-rules. Invalid bracket metadata remains fatal before detector/clock access at
-the affected lookup boundary; it is never a detector recovery.
+rules. Invalid Quality metadata fails before detector access; invalid Decode
+metadata fails at the conditional query boundary after td. Neither is a detector
+recovery.
 
 Detected Knees restrict the initial active G set. For `not_found` (`no_knee` or
 `flat_quality`), DC activates only the middle original candidate in sorted
@@ -66,7 +89,8 @@ detected groups; DC does not fabricate a detected Knee. `error_recovered` still
 activates all five G. Eligible combinations satisfy the active G
 condition and `tpot_s <= budget_s`. A nonempty eligible set minimizes
 `(energy_j_per_token,-quality,tpot_s,G,frequency_mhz)`. Otherwise DC releases the
-active G restriction, including a median-only restriction, and minimizes all 40 candidates by
+active G restriction, including a median-only restriction, and selects from the
+returned global fastest TPOT ties by
 `(tpot_s,-quality,energy_j_per_token,G,frequency_mhz)`. Both paths compare full
 Python binary64 values directly, with no rounding, approximate ties or energy
 normalization. `predicted_feasible` is the chosen TPOT comparison with the budget;
@@ -75,8 +99,11 @@ actual measured SLO result.
 
 Active decisions use `status='selected'` and selection path `energy_min` or
 `latency_fallback`. The frozen decision preserves raw Quality predictions, Knee
-status, target, budget, integer times, selected Quality, and all 40 candidate
-records. Flags describe the original active G/time filter even after fallback, so a
+status, target, budget, integer times, selected Quality, and only the queried
+detail candidates (1..40). `selection_rule="budget_filtered_decode"` marks this
+contract, including skipped decisions. Historical unmarked traces retain their
+full-40 interpretation. Flags describe the original active G/time filter even
+after fallback, so a
 selected fallback outside the detected or median G has `eligible=False`. The
 existing `active_knee` flag records membership in that active G set. Reasons include
 `knee_excluded`, `time_budget_exceeded`, `not_selected`, and for a selected fallback
