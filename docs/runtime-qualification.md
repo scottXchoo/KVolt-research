@@ -6,7 +6,7 @@ saving target. Normal SLO violations remain valid observations.
 
 An evidence report is scoped to the Runtime Python source hashes, model and
 tokenizer pins, KIVI sources and native binary pins, Python/platform/dependencies,
-physical AGX2 identity and boot ID, sealed measured LUT hashes, device profile
+physical AGX2 identity and boot ID, runtime and reference measured LUT hashes, device profile
 and power profile. Source/profile/device changes require matching new evidence.
 The original LUT's `runtime_eligible=false` flags are never rewritten.
 
@@ -28,7 +28,8 @@ diagnostic inputs remain excluded from the formal evaluation.
 
 ```sh
 python tools/qualify_m4.py prepare \
-  --model-dir SNAPSHOT --lut-dir SEALED_AGX2_LUTS \
+  --model-dir SNAPSHOT --lut-dir data/luts/current \
+  --cpu-lut-dir SEALED_AGX2_CORRECTNESS_FIXTURE \
   --device-profile DEVICE.json --power-profile POWER.json \
   --kivi-root KIVI --baseline-root INDEPENDENT_REFERENCE_ROOT \
   --manifest DEVELOPMENT_MANIFEST.json \
@@ -81,8 +82,22 @@ test, remain in the frozen plan and original JUnit files. Separately selected
 GPU correctness tests must execute with zero skips.
 The pinned M1 input file is copied into this attempt. Both existing GPU opt-in
 flags and the common lock path are explicitly set; CPU-stage opt-ins are cleared.
-The CPU suite uses the supplied measured LUT directory and permits only the
-existing 103 integration GPU skips. The separately selected 102 cache/Prefill
+`--lut-dir data/luts/current` uses the same pinned runtime-repeat5 and
+reference-repeat10 selector as `kvolt run` during preparation, execution and
+performance auditing. The frozen `lut-provenance.json` records that runtime
+directory and its full provenance, including selector content/hash and target
+identity. Revalidation rejects a changed selection or source before hardware
+access. This creates new scoped evidence; original source eligibility flags and
+historical reports retain their existing meaning.
+
+The CPU suite uses the separate `--cpu-lut-dir` sealed measured fixture because
+historical data-contract tests require its original distribution format. Its
+directory and exact provenance are frozen in `cpu/lut-provenance.json` and
+revalidated before execution. This fixture does not supply runtime predictions
+or targets. Omitting this option preserves the historical default of using
+`--lut-dir` for the CPU fixture, so current/compact runtime sources require an
+explicit sealed CPU fixture. Existing frozen sealed plans retain their v1 schema.
+The CPU suite permits only the existing 103 integration GPU skips. The separately selected 102 cache/Prefill
 GPU checks must all pass. Their Prefill report is written inside this attempt.
 `--baseline-root` identifies the independent reference Python helpers separately
 from the KIVI checkout. Both helper hashes are checked before correctness tests,
@@ -106,7 +121,7 @@ coverage; no extrapolated qualification is inferred.
 ```sh
 kvolt run --mode performance --qualification M4/qualification.json \
   --warmup formal --collect-power --native-profile agx2 \
-  --model-dir SNAPSHOT --lut-dir SEALED_AGX2_LUTS \
+  --model-dir SNAPSHOT --lut-dir data/luts/current \
   --device-profile DEVICE.json --power-profile POWER.json \
   --kivi-root KIVI --manifest EVALUATION_MANIFEST.json --output-dir NEW_SESSION
 ```

@@ -144,6 +144,35 @@ def cpu_environment(lut_dir):
     return environment
 
 
+def lut_source(lut_dir, repo):
+    """Freeze exact source identity, including selector and separate targets."""
+    return {'lut_dir': str(Path(lut_dir).resolve()), 'provenance': asdict(repo.provenance)}
+
+
+def validate_lut_sources(plan):
+    from kvolt_runtime.policy.compact import load_lut_repository
+    from kvolt_runtime.policy.lut import MeasuredLUTRepository
+    root = Path(plan['root'])
+    runtime_file, cpu_file = 'lut-provenance.json', 'cpu/lut-provenance.json'
+    frozen = plan['frozen_files']
+    # Historical sealed plans retain their exact v1 schema. Current/compact
+    # plans need identities captured before correctness tests, not at execute.
+    lut_dir = Path(plan['lut_dir'])
+    compact = any((lut_dir/name).exists() for name in ('selection.json', 'manifest.json'))
+    if runtime_file not in frozen and cpu_file not in frozen:
+        require(not compact, 'current/compact M4 plan requires frozen LUT provenance')
+        return
+    require(runtime_file in frozen and cpu_file in frozen, 'missing frozen runtime/CPU LUT provenance')
+    runtime = read_json(root/runtime_file)
+    require(canonical_json(runtime) == canonical_json(lut_source(lut_dir, load_lut_repository(lut_dir))),
+            'runtime LUT source changed after preparation')
+    cpu = read_json(root/cpu_file)
+    require(isinstance(cpu, dict) and set(cpu) == {'lut_dir', 'provenance'}
+            and isinstance(cpu['lut_dir'], str), 'invalid frozen CPU LUT provenance')
+    require(canonical_json(cpu) == canonical_json(lut_source(cpu['lut_dir'], MeasuredLUTRepository(cpu['lut_dir']))),
+            'CPU LUT fixture changed after preparation')
+
+
 def baseline_sources(root):
     """Identify the independent reference helpers without inferring KIVI layout."""
     root = Path(root).resolve()
@@ -154,7 +183,9 @@ def baseline_sources(root):
 
 
 def prepare(args):
-    from kvolt_runtime.run_cli import _repository, _tokenizer, _device_profile, _power_profile
+    from kvolt_runtime.run_cli import _tokenizer, _device_profile, _power_profile
+    from kvolt_runtime.policy.compact import load_lut_repository
+    from kvolt_runtime.policy.lut import MeasuredLUTRepository
     from kvolt_runtime.execution.inputs import preflight_inputs
     from kvolt_runtime.recording import request_record
     require(os.geteuid() != 0, 'prepare must run as the ordinary project user')
@@ -166,7 +197,10 @@ def prepare(args):
     power_path.write_bytes(args.power_profile.read_bytes())
     manifest = freeze_manifest(args.manifest.resolve(), root/'cohort', full_caps=True)
     eos_manifest = freeze_manifest(args.eos_manifest.resolve(), root/'eos-cohort')
-    repo = _repository(argparse.Namespace(lut_dir=args.lut_dir, mock=None))
+    repo = load_lut_repository(args.lut_dir)
+    cpu_lut_dir = getattr(args, 'cpu_lut_dir', None) or args.lut_dir
+    cpu_repo = MeasuredLUTRepository(cpu_lut_dir)
+    write(root/'lut-provenance.json', lut_source(args.lut_dir, repo))
     tokenizer, _ = _tokenizer(args.model_dir)
     prepared = preflight_inputs(manifest=manifest, prompt_file=None, tokenizer=tokenizer, repo=repo)
     eos = preflight_inputs(manifest=eos_manifest, prompt_file=None, tokenizer=tokenizer, repo=repo)
@@ -179,12 +213,13 @@ def prepare(args):
     _device_profile(profile_path)
     _power_profile(power_path)
     (root/'cpu').mkdir()
+    write(root/'cpu/lut-provenance.json', lut_source(cpu_lut_dir, cpu_repo))
     reference = baseline_sources(args.baseline_root)
     write(root/'cpu/reference-helpers.json', reference)
     m1 = root/'cpu/m1-cohort.json'
     m1.write_bytes(args.m1_cohort.read_bytes())
     require(file_sha256(m1) == 'e9f0c05e0d21e13356f6a64d1176b03bcff613c708b0b0fd72228f711aadc20d', 'pinned M1 correctness cohort changed')
-    environment = cpu_environment(args.lut_dir)
+    environment = cpu_environment(cpu_lut_dir)
     command([sys.executable, '-m', 'pytest', '-q', '--junitxml='+str(root/'cpu/tests.xml')],
             root/'cpu/pytest.log', env=environment)
     cpu = junit(root/'cpu/tests.xml', cpu_suite=True)
@@ -248,6 +283,7 @@ def validate_plan(path, expected_digest):
     require(file_sha256(root/'cpu/m1-cohort.json') == 'e9f0c05e0d21e13356f6a64d1176b03bcff613c708b0b0fd72228f711aadc20d', 'pinned M1 correctness cohort changed')
     require(read_json(root/'cpu/reference-helpers.json') == baseline_sources(plan['baseline_root']),
             'independent baseline helpers changed after preparation')
+    validate_lut_sources(plan)
     # Sysfs controls are trusted project inputs, not arbitrary root write targets.
     profile = read_json(root/'device-profile.json')
     patterns = {
@@ -466,7 +502,7 @@ def verify_frozen_requests(plan, repo):
 def validate_performance(plan, binding, profile):
     """Exercise the candidate through the actual performance CLI and new lock."""
     from kvolt_runtime.device import HardwareLock
-    from kvolt_runtime.policy.lut import MeasuredLUTRepository
+    from kvolt_runtime.policy.compact import load_lut_repository
     root = Path(plan['root'])
     with HardwareLock() as lock:
         with hardware_scope(root, 'performance.', profile, lock):
@@ -476,7 +512,7 @@ def validate_performance(plan, binding, profile):
                     'actual performance qualification gate was not exercised')
             proof = audit_session(root/'run-performance/session.json', require_formal_warmup=True,
                                   binding=binding, expected_requests=plan['requests'],
-                                  repository=MeasuredLUTRepository(plan['lut_dir']))
+                                  repository=load_lut_repository(plan['lut_dir']))
             write(root/'performance-proof.json', proof)
 
 
@@ -499,7 +535,7 @@ def publish_evidence(plan, binding, summaries, profile):
 
 def execute(args):
     from kvolt_runtime.device import DeviceProfile, HardwareLock
-    from kvolt_runtime.policy.lut import MeasuredLUTRepository
+    from kvolt_runtime.policy.compact import load_lut_repository
     from kvolt_runtime.telemetry import PowerProfile
     from kvolt_runtime.cli import _runtime_metadata
     from probe_device import qualify
@@ -514,7 +550,7 @@ def execute(args):
     try:
         profile = DeviceProfile.from_json(plan['device_profile'])
         power = PowerProfile.from_json(plan['power_profile'])
-        repo = MeasuredLUTRepository(plan['lut_dir'])
+        repo = load_lut_repository(plan['lut_dir'])
         verify_frozen_requests(plan, repo)
         binding = qualification_binding(repo=repo, device_profile=profile, power_profile=power,
                                         native_profile='agx2', runtime=_runtime_metadata())
@@ -582,6 +618,8 @@ def main(argv=None):
     prepare_parser = sub.add_parser('prepare', help='freeze inputs and run CPU/GPU correctness without admin writes')
     for name in ('model-dir','lut-dir','device-profile','power-profile','kivi-root','baseline-root','manifest','eos-manifest','m1-cohort','output-dir'):
         prepare_parser.add_argument('--'+name, type=Path, required=True)
+    prepare_parser.add_argument('--cpu-lut-dir', type=Path,
+                                help='pinned sealed measured fixture for correctness tests (default: --lut-dir); separate from runtime LUT source')
     execute_parser = sub.add_parser('execute', help='explicit temporary device preparation and integrated M4 verification')
     execute_parser.add_argument('plan', type=Path)
     execute_parser.add_argument('--plan-sha256', required=True, help='SHA-256 emitted by the reviewed non-root prepare step')

@@ -299,7 +299,7 @@ def test_independent_baseline_helpers_are_pinned_before_gpu_stage(driver, tmp_pa
 
 def test_actual_performance_validation_uses_new_lock_and_candidate(driver, tmp_path, monkeypatch):
     import kvolt_runtime.device as device_module
-    import kvolt_runtime.policy.lut as lut_module
+    import kvolt_runtime.policy.compact as lut_module
     events = []
     lock = object()
     @contextmanager
@@ -330,7 +330,7 @@ def test_actual_performance_validation_uses_new_lock_and_candidate(driver, tmp_p
         events.append('audit')
         return {'status': 'passed'}
     monkeypatch.setattr(device_module, 'HardwareLock', locked)
-    monkeypatch.setattr(lut_module, 'MeasuredLUTRepository', lambda path: object())
+    monkeypatch.setattr(lut_module, 'load_lut_repository', lambda path: object())
     monkeypatch.setattr(driver, 'hardware_scope', scope)
     monkeypatch.setattr(driver, 'run_session', session)
     monkeypatch.setattr(driver, 'audit_session', audit)
@@ -419,3 +419,185 @@ def test_signal_injection_preserves_terminal_boundaries_and_targets_real_active_
                 assert session['results'][0]['generation']['stop_reason'] == 'eos'
     finally:
         signal.signal(signal_number, previous_handler)
+
+
+def current_lut_dir():
+    return Path(__file__).resolve().parents[1]/'data/luts/current'
+
+
+def test_prepare_current_runtime_uses_separate_frozen_cpu_fixture(driver, tmp_path, monkeypatch):
+    """The legacy data suite must not mistake current's compact data for sealed data."""
+    import kvolt_runtime.run_cli as cli
+    import kvolt_runtime.execution.inputs as inputs
+    import kvolt_runtime.recording as recording
+    import kvolt_runtime.policy.lut as lut
+    from kvolt_runtime.policy.types import LUTProvenance
+    output, sealed = tmp_path/'attempt', tmp_path/'historical-sealed'
+    source = tmp_path/'input.json'
+    source.write_text('{}')
+    args = SimpleNamespace(output_dir=output, model_dir=tmp_path/'model', lut_dir=current_lut_dir(),
+                           cpu_lut_dir=sealed, device_profile=source, power_profile=source,
+                           manifest=source, eos_manifest=source, m1_cohort=source,
+                           baseline_root=tmp_path/'baseline', kivi_root=tmp_path/'kivi')
+    cpu_repo = SimpleNamespace(provenance=LUTProvenance(kind='measured', source_device='AGX2',
+        manifest_sha256='a'*64, files_sha256=(('fixture.json', 'b'*64),)))
+    def sealed_repository(path):
+        assert Path(path) == sealed
+        return cpu_repo
+    monkeypatch.setattr(lut, 'MeasuredLUTRepository', sealed_repository)
+    monkeypatch.setattr(driver.os, 'geteuid', lambda: 501)
+    monkeypatch.setattr(driver, 'clean_source', lambda: 'reviewed')
+    monkeypatch.setattr(driver, 'source_hashes', lambda: {'source': 'c'*64})
+    monkeypatch.setattr(driver, 'baseline_sources', lambda root: {'root': str(root), 'files_sha256': {}})
+    monkeypatch.setattr(cli, '_tokenizer', lambda path: (object(), {}))
+    monkeypatch.setattr(cli, '_device_profile', lambda path: object())
+    monkeypatch.setattr(cli, '_power_profile', lambda path: object())
+    def freeze(source, destination, **kwargs):
+        driver.write(destination/'manifest.json', {'requests': []})
+        return destination/'manifest.json'
+    monkeypatch.setattr(driver, 'freeze_manifest', freeze)
+    def preflight(*, manifest, **kwargs):
+        assert kwargs['repo'].provenance.manifest_sha256 == 'b421fcd10ecb57df7d6962aa9a5f48e264e90defc0c76a3544218d31685f783b'
+        lengths = [1024]*8 if manifest.parent.name == 'eos-cohort' else [1024, 4096, 8192]
+        return SimpleNamespace(requests=[SimpleNamespace(spec=SimpleNamespace(length=n, nmax=512)) for n in lengths])
+    monkeypatch.setattr(inputs, 'preflight_inputs', preflight)
+    monkeypatch.setattr(recording, 'request_record', lambda item, index: {'length': item.spec.length})
+    original_sha = driver.file_sha256
+    monkeypatch.setattr(driver, 'file_sha256', lambda path: 'e9f0c05e0d21e13356f6a64d1176b03bcff613c708b0b0fd72228f711aadc20d'
+        if Path(path).name == 'm1-cohort.json' else original_sha(path))
+    environments = []
+    def command(argv, log, *, env):
+        environments.append(env)
+        log.write_text('simulated process output')
+        for item in argv:
+            if str(item).startswith('--junitxml='):
+                path = Path(str(item).split('=', 1)[1])
+                if path.name == 'tests.xml':
+                    cases = '<testcase/>' + ''.join(
+                        f'<testcase classname="tests.integration.{name}"><skipped/></testcase>'*count
+                        for name, count in [('test_cache_equivalence_gpu', 101),
+                                            ('test_backend_prefill_gpu', 1), ('test_greedy_equivalence_gpu', 1)])
+                else:
+                    cases = '<testcase/>'*102
+                    driver.write(output/'cpu/b1-prefill-report.json', {'status': 'passed'})
+                path.write_text('<testsuite>'+cases+'</testsuite>')
+    monkeypatch.setattr(driver, 'command', command)
+    driver.prepare(args)
+    plan = driver.read_json(output/'plan.json')
+    assert plan['lut_dir'] == str(current_lut_dir())
+    assert all(env['KVOLT_LUT_BUNDLE'] == str(sealed) for env in environments)
+    assert plan['cpu']['skipped'] == 103 and plan['gpu']['passed'] == 102 and plan['gpu']['skipped'] == 0
+    cpu = driver.read_json(output/'cpu/lut-provenance.json')
+    assert cpu['lut_dir'] == str(sealed) and cpu['provenance']['manifest_sha256'] == 'a'*64
+    runtime = driver.read_json(output/'lut-provenance.json')
+    assert runtime['lut_dir'] == str(current_lut_dir())
+    metadata = driver.strict_json(runtime['provenance']['metadata_json'])
+    assert metadata['current_selection']['selection']['reference']['directory'] == 'agx2-reference-repeat10'
+    assert {'lut-provenance.json', 'cpu/lut-provenance.json'} <= plan['frozen_files'].keys()
+
+
+def test_execute_loads_current_reference_identity_before_hardware(driver, tmp_path, monkeypatch):
+    import kvolt_runtime.device as device
+    import kvolt_runtime.telemetry as telemetry
+    import kvolt_runtime.cli as cli
+    from kvolt_runtime.policy.compact import load_lut_repository
+    from kvolt_runtime.qualification.contracts import _lut_binding
+    expected = _lut_binding(load_lut_repository(current_lut_dir()).provenance)
+    plan = {'root': str(tmp_path), 'lut_dir': str(current_lut_dir()),
+            'device_profile': 'device.json', 'power_profile': 'power.json'}
+    monkeypatch.setattr(driver.os, 'geteuid', lambda: 0)
+    monkeypatch.setattr(driver, 'validate_plan', lambda *args: plan)
+    monkeypatch.setattr(device.DeviceProfile, 'from_json', lambda path: object())
+    monkeypatch.setattr(telemetry.PowerProfile, 'from_json', lambda path: object())
+    monkeypatch.setattr(driver, 'verify_frozen_requests', lambda plan, repo: None)
+    monkeypatch.setattr(cli, '_runtime_metadata', lambda: {})
+    class BoundBeforeHardware(Exception): pass
+    def binding(**kwargs):
+        assert _lut_binding(kwargs['repo'].provenance) == expected
+        assert 'reference' in expected
+        raise BoundBeforeHardware
+    monkeypatch.setattr(driver, 'qualification_binding', binding)
+    monkeypatch.setattr(device, 'HardwareLock', lambda: pytest.fail('hardware accessed before binding'))
+    with pytest.raises(BoundBeforeHardware):
+        driver.execute(SimpleNamespace(plan=tmp_path/'plan.json', plan_sha256='d'*64))
+
+
+def test_performance_audit_loads_same_current_identity_as_run(driver, tmp_path, monkeypatch):
+    import kvolt_runtime.device as device
+    from kvolt_runtime.policy.compact import load_lut_repository
+    from kvolt_runtime.qualification.contracts import _lut_binding
+    expected = _lut_binding(load_lut_repository(current_lut_dir()).provenance)
+    plan = {'root': str(tmp_path), 'lut_dir': str(current_lut_dir()), 'manifest': 'manifest.json', 'requests': []}
+    @contextmanager
+    def scope(*args):
+        yield object()
+    monkeypatch.setattr(device, 'HardwareLock', scope)
+    monkeypatch.setattr(driver, 'hardware_scope', scope)
+    monkeypatch.setattr(driver, 'run_session', lambda *args, **kwargs: {
+        'mode': 'performance', 'provenance': {'formal_performance_qualified': True}})
+    def audit(path, **kwargs):
+        assert _lut_binding(kwargs['repository'].provenance) == expected
+        return {'status': 'passed'}
+    monkeypatch.setattr(driver, 'audit_session', audit)
+    driver.validate_performance(plan, {'lut': expected}, object())
+    assert driver.read_json(tmp_path/'performance-proof.json')['status'] == 'passed'
+
+
+@pytest.mark.parametrize('mutation', [None, 'runtime_changed', 'cpu_changed', 'missing_runtime',
+                                    'missing_cpu', 'cpu_unknown_key', 'cpu_path'])
+def test_frozen_plan_binds_current_and_cpu_sources(driver, plan_bundle, monkeypatch, mutation):
+    import kvolt_runtime.policy.lut as lut
+    from kvolt_runtime.policy.compact import load_lut_repository
+    from kvolt_runtime.policy.types import LUTProvenance
+    bundle = plan_bundle
+    bundle.plan['lut_dir'] = str(current_lut_dir())
+    runtime = driver.lut_source(current_lut_dir(), load_lut_repository(current_lut_dir()))
+    cpu_repo = SimpleNamespace(provenance=LUTProvenance(kind='measured', source_device='AGX2',
+        manifest_sha256='a'*64, files_sha256=(('data.json', 'b'*64),)))
+    cpu_dir = bundle.root/'sealed'
+    def sealed_repository(path):
+        assert Path(path) == cpu_dir
+        return cpu_repo
+    monkeypatch.setattr(lut, 'MeasuredLUTRepository', sealed_repository)
+    cpu = driver.lut_source(cpu_dir, cpu_repo)
+    if mutation == 'runtime_changed':
+        # A different selector/target must fail even with correctly rehashed
+        # local evidence and an unchanged runtime prediction manifest.
+        metadata = driver.strict_json(runtime['provenance']['metadata_json'])
+        metadata['target_repository']['manifest_sha256'] = 'f'*64
+        runtime['provenance']['metadata_json'] = driver.canonical_json(metadata)
+    elif mutation == 'cpu_changed':
+        cpu['provenance']['files_sha256'] = [('data.json', 'c'*64)]
+    elif mutation == 'cpu_unknown_key':
+        cpu['runtime_override'] = str(cpu_dir)
+    elif mutation == 'cpu_path':
+        cpu['lut_dir'] = None
+    if mutation != 'missing_runtime':
+        driver.write(bundle.root/'lut-provenance.json', runtime)
+    if mutation != 'missing_cpu':
+        driver.write(bundle.root/'cpu/lut-provenance.json', cpu)
+    digest = bundle.save()
+    if mutation is None:
+        assert driver.validate_plan(bundle.path, digest) == bundle.plan
+    else:
+        with pytest.raises(ValueError, match='LUT'):
+            driver.validate_plan(bundle.path, digest)
+
+
+def test_current_plan_cannot_omit_both_frozen_sources(driver, plan_bundle):
+    bundle = plan_bundle
+    bundle.plan['lut_dir'] = str(current_lut_dir())
+    with pytest.raises(ValueError, match='requires frozen LUT provenance'):
+        driver.validate_plan(bundle.path, bundle.save())
+
+
+@pytest.mark.parametrize('cpu_option', [[], ['--cpu-lut-dir', '/sealed-cpu']])
+def test_prepare_cpu_fixture_cli_is_optional_and_never_replaces_runtime(driver, monkeypatch, cpu_option):
+    seen = []
+    monkeypatch.setattr(driver, 'prepare', seen.append)
+    required = ['model-dir', 'lut-dir', 'device-profile', 'power-profile', 'kivi-root',
+                'baseline-root', 'manifest', 'eos-manifest', 'm1-cohort', 'output-dir']
+    argv = ['prepare'] + [item for name in required for item in ['--'+name, '/'+name]] + cpu_option
+    assert driver.main(argv) == 0
+    assert seen[0].lut_dir == Path('/lut-dir')
+    assert seen[0].cpu_lut_dir == (Path('/sealed-cpu') if cpu_option else None)
