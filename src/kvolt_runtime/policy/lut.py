@@ -10,8 +10,8 @@ from ..config import GROUPS
 from ..errors import ContractError
 from .types import (
     Bracket, DecodePrediction, FREQUENCIES_MHZ, LUTError, LUTProvenance,
-    PERFORMANCE_LENGTHS, PrefillPrediction, QUALITY_LENGTHS, QualityPrediction,
-    finite, length as validate_length,
+    PERFORMANCE_LENGTHS, PrefillLatencyPrediction, PrefillPrediction, QUALITY_LENGTHS, QualityPrediction,
+    finite, frequency, length as validate_length,
 )
 
 SOURCE_COMMIT = 'd6cf87a60984aa167c5b5d72de354fd3d587c2d5'
@@ -74,8 +74,25 @@ class _TabulatedLUT:
         validate_length(length)
 
     def prefill(self, length: int) -> tuple[PrefillPrediction, ...]:
+        return self.prefill_candidates(length, FREQUENCIES_MHZ)
+
+    def prefill_latencies(self, length: int) -> tuple[PrefillLatencyPrediction, ...]:
         bracket = _bracket(length, PERFORMANCE_LENGTHS)
-        return tuple(PrefillPrediction(length, f, *self._pair_at(self._prefill, (f,), bracket), bracket) for f in FREQUENCIES_MHZ)
+        return tuple(PrefillLatencyPrediction(
+            length, f, _at(self._prefill[(bracket.lower, f)][0],
+                           self._prefill[(bracket.upper, f)][0], bracket), bracket)
+            for f in FREQUENCIES_MHZ)
+
+    def prefill_candidates(self, length: int, frequencies: tuple[int, ...]) -> tuple[PrefillPrediction, ...]:
+        bracket = _bracket(length, PERFORMANCE_LENGTHS)
+        if type(frequencies) is not tuple:
+            raise ContractError('Prefill frequencies must be an immutable tuple')
+        for value in frequencies:
+            frequency(value)
+        if len(set(frequencies)) != len(frequencies):
+            raise ContractError('Prefill frequencies must be unique')
+        return tuple(PrefillPrediction(length, f, *self._pair_at(self._prefill, (f,), bracket), bracket)
+                     for f in sorted(frequencies))
 
     def decode(self, length: int) -> tuple[DecodePrediction, ...]:
         bracket = _bracket(length, PERFORMANCE_LENGTHS)
