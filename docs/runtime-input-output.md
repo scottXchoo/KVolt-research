@@ -89,6 +89,16 @@ artifact, otherwise null. Caller-owned session counts and stdout records use
 the same independently constructed generation/timing/energy/cleanup data.
 The recorder never retries a request.
 
+Request results additionally contain `memory` (`kvolt-memory-v1`), preserved
+unchanged in both `requests/NNNNNN/result.json` and `session.json.results`.
+Its `before`/`after` snapshots contain system RAM/swap, process RSS/lifetime HWM,
+and CUDA allocator counters; after-snapshot CUDA peaks are reset per request.
+Read windows, units, scope and unavailable/partial reasons accompany values.
+These diagnostics are independent of timing/energy validity, and unattempted
+requests have null snapshots. Stdout request summaries expose `memory_status`.
+See [request memory diagnostics](runtime-measurement.md#request-memory-diagnostics)
+for metric semantics and the distinction between snapshots and request peaks.
+
 `atomic_json`, `write_text` and `write_bytes` use same-directory temporary files,
 file fsync, atomic replacement and parent-directory fsync. Traversal and
 symlink artifact destinations are rejected. Directory file descriptors avoid

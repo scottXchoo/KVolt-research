@@ -14,6 +14,7 @@ from ..contracts import CacheFormat, RequestSpec, generation_stop
 from ..errors import ContractError
 from ..policy.prefill import PrefillController
 from ..recording import request_record, to_json_native
+from ..telemetry.memory import RequestMemoryMonitor, no_memory
 from .contracts import (
     EXIT_INPUT, EXIT_OK, EXIT_PREPARATION, EXIT_TECHNICAL,
     ExecutionError, PreparationError, StopController, error_record,
@@ -50,6 +51,7 @@ def _new_result(prepared, index):
                        't0_ns': None, 't1_ns': None, 'tN_ns': None,
                        'ttft_s': None, 'mean_tpot_s': None},
             'energy': _no_energy('not_run'),
+            'memory': no_memory('not_run'),
             'decisions': {'prefill': None, 'decode': None},
             'device': {'start': None, 'prefill': None, 'decode': None, 'restore': None},
             'cleanup': {'status': 'not_run', 'cache_released': None, 'gpu_restored': None},
@@ -209,12 +211,13 @@ class SessionRunner:
         from ..telemetry import energy_metrics, timing_metrics
         result = _new_result(item, index)
         generation, errors = result['generation'], result['errors']
-        cache = collector = None
+        cache = collector = memory = None
         pc = dc = None
         t0 = None
         stage = 'request_preparation'
         result['attempt_started_ns'] = self.clock()
         generation['status'] = 'failed'
+        result['memory'] = no_memory('not_started')
         try:
             if collect_power:
                 if self.collector_factory is None:
@@ -223,6 +226,15 @@ class SessionRunner:
                 if self.qualification is not None:
                     self._check_collector(collector)
             result['device']['start'] = self._verified_device_receipt(self.device.prepare_request(), stage)
+            # Auxiliary diagnostics stay outside t0..tN and cannot invalidate
+            # generation or the independent timing/energy measurements.
+            try:
+                memory = RequestMemoryMonitor(torch=getattr(self.backend, 'torch', None), clock=self.clock)
+                memory.start()
+            except Exception as error:
+                result['memory'] = no_memory('collection_failed')
+                result['memory']['errors'] = [error_record(error, stage='memory_start')]
+                memory = None
             if collect_power:
                 stage = 'power_start'
                 result['power_start'] = collector.start()
@@ -303,6 +315,15 @@ class SessionRunner:
         finally:
             generation['n_output_tokens'] = len(generation['token_ids'])
             completed = generation['status'] == 'completed'
+            if memory is not None:
+                try:
+                    # Read before evidence serialization and cache release, after
+                    # the final synchronized token (or the failed generation).
+                    result['memory'] = memory.finish()
+                except Exception as error:
+                    result['memory'] = no_memory('collection_failed')
+                    result['memory']['errors'] = [error_record(error, stage='memory_finish')]
+            result['memory']['generation_status'] = generation['status']
             try:
                 # Preserve selected decisions even when generation fails, but
                 # build their nested evidence only after the last token boundary.
@@ -417,6 +438,7 @@ class SessionRunner:
                   'attempt': 1, 'index': index, 'text': text,
                   'generation_status': result['generation']['status'],
                   'timing_status': result['timing']['status'], 'energy_status': result['energy']['status'],
+                  'memory_status': result['memory']['status'],
                   'cleanup_status': result['cleanup']['status'],
                   'artifact_root': str(self.recorder.output_dir), **paths}
         self.emit(record)

@@ -28,6 +28,72 @@ An incomplete generation has null normal measurement fields and
 `prefix`, together with original output timestamps. A prefix is not a normal
 complete-request observation.
 
+## Request memory diagnostics
+
+Every attempted request also records `memory` (`kvolt-memory-v1`) independently
+of power collection. `RequestMemoryMonitor` uses only the standard library and
+the backend's already loaded `torch` object; importing telemetry does not import
+torch, initialize CUDA, or add a dependency. The backend fixes inference to
+`cuda:0`, and every allocator read/reset explicitly selects that device.
+
+The runner captures `before` after device preparation, before power collector
+startup and `t0`; it captures `after` after generation, before decision
+serialization and cache release. Each snapshot has monotonic read-start/end
+timestamps because the counters are read sequentially, not atomically. On a
+failed or interrupted generation, snapshots remain diagnostics and
+`generation_status` identifies the incomplete request. An unattempted request
+has `status=not_run` and null snapshots.
+
+| Section | Values | Scope |
+| --- | --- | --- |
+| `system` | `total_bytes`, `available_bytes`, `used_bytes`, `usage_percent`, `swap_total_bytes`, `swap_free_bytes`, `swap_used_bytes` | `/proc/meminfo`; used = total minus available; usage = 100 × used / total |
+| `process` | `rss_bytes`, `hwm_bytes`, `swap_bytes` | `/proc/self/status`: VmRSS, VmHWM, VmSwap |
+| `cuda` | `allocated_bytes`, `reserved_bytes`, `max_allocated_bytes`, `max_reserved_bytes`, `device` | PyTorch CUDA allocator for the inference process/device |
+
+Linux `kB` values are converted to bytes using 1024. `MemAvailable` is the
+kernel's estimate of memory available without swapping. It is not interchangeable
+with `MemFree`. VmRSS is the kernel's approximate resident-set accounting;
+VmHWM is the process-lifetime RSS high-water mark, including earlier model load,
+warmup and requests. Neither two RAM snapshots nor VmHWM is a request-specific
+RAM peak or an average over the inference interval.
+
+CUDA peaks are reset once after the before snapshot, before power startup and
+`t0`. Only the after snapshot publishes reset-scoped maxima. The explicit
+`cuda_peak_reset` receipt and `scope.cuda_peak_window` identify the window;
+it surrounds, but is not exactly, `t0..tN`. Peaks include resident model weights
+and any transient allocation during Prefill/packing/Decode. Earlier warmup
+high-water marks are excluded, but memory retained by the caching allocator
+at reset remains part of the baseline. No `empty_cache`, extra synchronize,
+device-memory query, or per-token memory sampling is performed. Reset failure
+leaves request peaks null instead of publishing an earlier lifetime maximum.
+
+`allocated` measures tensor allocations; `reserved` includes the allocator's
+cached blocks. Neither is device-wide usage or an isolated KV-cache size.
+System RAM, process RSS and CUDA allocator values can overlap, especially on
+the shared-memory Jetson, and must not be summed. This change does not measure
+KV tensor storage separately, memory bandwidth, or a continuous RAM trace.
+
+Each section retains available fields and per-field error reasons. Missing proc
+files (including macOS), missing/uninitialized CUDA, malformed fields, and failed
+reads remain null with explicit reasons. Overall `status` is `valid`, `partial`,
+or `unavailable`, according to the available diagnostics. Unexpected monitor
+exceptions are recorded inside `memory.errors` with `reason=collection_failed`.
+Memory diagnostic failures do not change generation, timing, energy, SLO, or
+cleanup validity. `units` and `scope` travel with the stored evidence. `clock`
+identifies `time.monotonic_ns` or an `injected-test-clock`; fixture timestamps
+are never labeled as production measurements.
+
+The complete record is saved in `requests/NNNNNN/result.json` and the matching
+`session.json.results` entry. Stdout request summaries add `memory_status` and
+retain the existing artifact links. Historical records are not rewritten.
+CPU tests cover fixture arithmetic, unavailable/malformed counters, peak reset
+isolation, timing boundaries, errors/interruption/N=1, and JSON persistence.
+Actual AGX allocator readings and diagnostic overhead require hardware
+validation; existing formal qualification does not transfer to changed source.
+
+Counter semantics follow the [Linux proc documentation](https://docs.kernel.org/filesystems/proc.html)
+and [PyTorch 2.5 CUDA memory API](https://github.com/pytorch/pytorch/blob/v2.5.0/torch/cuda/memory.py).
+
 ## Sensor scope and units
 
 Energy sums exactly these three independent INA3221 rails:
