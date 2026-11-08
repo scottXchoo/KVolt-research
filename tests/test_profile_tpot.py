@@ -310,5 +310,41 @@ except ValueError as error:
                     verify_session_source(session, 'baseline-sha')
 
 
+class LutOverrideTests(unittest.TestCase):
+    def test_default_retains_frozen_lut_without_reference_override(self):
+        from tools.profile_tpot import lut_selection
+        self.assertEqual(lut_selection({'lut_dir': '/frozen/lut'}), ('/frozen/lut', []))
+
+    def test_compact_override_passes_explicit_reference_and_preserves_plan(self):
+        from tools.profile_tpot import lut_selection
+        plan = {'lut_dir': '/frozen/lut'}
+        selected, arguments = lut_selection(plan, Path('data/luts/latest'), Path('/reference/lut'))
+        self.assertEqual(selected, str(Path('data/luts/latest').resolve()))
+        self.assertEqual(arguments, ['--reference-lut-dir', '/reference/lut'])
+        self.assertEqual(plan, {'lut_dir': '/frozen/lut'})
+
+    def test_reference_cannot_silently_change_frozen_lut(self):
+        from tools.profile_tpot import lut_selection
+        with self.assertRaisesRegex(ValueError, 'explicit --lut-dir'):
+            lut_selection({'lut_dir': '/frozen/lut'}, reference_lut_dir=Path('/reference/lut'))
+
+    def test_actual_prediction_and_target_metadata_must_match_and_remain_development(self):
+        from tools.profile_tpot import verify_session_lut
+        expected = {'source_device': 'agx1', 'files_sha256': {'decode.json': 'latest'},
+                    'reference': {'source_device': 'agx2', 'sha256': 'target'}}
+        session = {'mode': 'development', 'provenance': {
+            'lut': expected, 'formal_performance_qualified': False}}
+        verify_session_lut(session, expected)
+        for changed in ({**expected, 'files_sha256': {'decode.json': 'old'}},
+                        {**expected, 'reference': {'source_device': 'agx2', 'sha256': 'other'}}):
+            with self.assertRaisesRegex(ValueError, 'LUT/reference'):
+                verify_session_lut(session, changed)
+        with self.assertRaisesRegex(ValueError, 'unqualified development'):
+            verify_session_lut({**session, 'mode': 'performance'}, expected)
+        with self.assertRaisesRegex(ValueError, 'unqualified development'):
+            verify_session_lut({'mode': 'development', 'provenance': {
+                'lut': expected, 'formal_performance_qualified': True}}, expected)
+
+
 if __name__ == "__main__":
     unittest.main()

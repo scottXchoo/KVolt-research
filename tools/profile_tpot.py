@@ -114,6 +114,24 @@ def verify_session_source(session, commit):
     return runtime
 
 
+def lut_selection(plan, lut_dir=None, reference_lut_dir=None):
+    """Make a development override explicit; frozen cohort inputs stay fixed."""
+    if reference_lut_dir is not None and lut_dir is None:
+        raise ValueError('--reference-lut-dir requires an explicit --lut-dir override')
+    selected = str(Path(lut_dir).resolve()) if lut_dir is not None else plan['lut_dir']
+    reference = str(Path(reference_lut_dir).resolve()) if reference_lut_dir is not None else None
+    arguments = [] if reference is None else ['--reference-lut-dir', reference]
+    return selected, arguments
+
+
+def verify_session_lut(session, expected):
+    """Check the actual source/target hashes, never infer them from argv alone."""
+    if session.get('provenance', {}).get('lut') != expected:
+        raise ValueError('session LUT/reference source differs from the preflight override')
+    if session.get('mode') != 'development' or session.get('provenance', {}).get('formal_performance_qualified') is not False:
+        raise ValueError('LUT override profiling must remain unqualified development evidence')
+
+
 def validate_inputs(path, digest):
     """Bind diagnostic inputs to a reviewed plan, independently of its source."""
     from kvolt_runtime.qualification.audit import artifact, read_json, require
@@ -145,6 +163,10 @@ def main(argv=None):
     parser.add_argument('--plan-sha256', required=True, help='reviewed frozen input-plan SHA-256')
     parser.add_argument('--runtime-root', type=Path, default=ROOT,
                         help='clean Git checkout to diagnose; imported in a fresh process')
+    parser.add_argument('--lut-dir', type=Path,
+                        help='explicit development LUT override; frozen request inputs stay unchanged')
+    parser.add_argument('--reference-lut-dir', type=Path,
+                        help='explicit reference-target repository for a compact LUT override')
     parser.add_argument('--output-dir', type=Path, required=True, help='new diagnostic directory')
     parser.add_argument('--repeats', type=int, choices=range(1, 4), default=1)
     args = parser.parse_args(argv)
@@ -163,6 +185,14 @@ def main(argv=None):
     from kvolt_runtime.run_cli import RunFactories, run
     imported_runtime = runtime_modules(runtime)
     plan = validate_inputs(args.plan, args.plan_sha256)
+    selected_lut, reference_arguments = lut_selection(plan, args.lut_dir, args.reference_lut_dir)
+    expected_lut = None
+    if args.lut_dir is not None:
+        # Validate before taking the hardware lock or changing any settings.
+        from kvolt_runtime.policy.compact import load_lut_repository
+        from kvolt_runtime.cli import _source_metadata
+        repository = load_lut_repository(selected_lut, reference_lut_dir=args.reference_lut_dir)
+        expected_lut = _source_metadata(repository.provenance)
     profile = DeviceProfile.from_json(plan['device_profile'])
     root = args.output_dir.resolve()
     root.mkdir(parents=True, exist_ok=False)
@@ -172,6 +202,9 @@ def main(argv=None):
               'runtime_modules': imported_runtime,
               'runtime_root': str(runtime), 'plan_sha256': file_sha256(args.plan),
               'plan_source_commit': plan['source_commit'], 'repeats': args.repeats,
+              'lut_override': None if args.lut_dir is None else {
+                  'lut_dir': selected_lut, 'reference_arguments': reference_arguments,
+                  'expected_lut': expected_lut},
               'instrumentation': 'host call wrappers; includes wrapper overhead; nested durations overlap',
               'sessions': [], 'errors': []}
     write(root/'profile-status.json', status)
@@ -182,10 +215,11 @@ def main(argv=None):
                     trace, records = Trace(), []
                     output = root/f'run-{index+1}'
                     argv = ['run', '--manifest', plan['manifest'], '--model-dir', plan['model_dir'],
-                            '--lut-dir', plan['lut_dir'], '--output-dir', str(output),
+                            '--lut-dir', selected_lut, '--output-dir', str(output),
                             '--device-profile', plan['device_profile'], '--power-profile', plan['power_profile'],
                             '--collect-power', '--native-profile', 'agx2', '--kivi-root', plan['kivi_root'],
                             '--warmup', 'formal', '--mode', 'development']
+                    argv += reference_arguments
                     parsed = _parser().parse_args(argv)
                     parsed._original = invocation
                     factories = RunFactories()
@@ -205,6 +239,9 @@ def main(argv=None):
                     session['runtime'] = actual.get('provenance', {}).get('runtime')
                     verify_session_source(actual, commit)
                     session['source_verified'] = True
+                    if expected_lut is not None:
+                        verify_session_lut(actual, expected_lut)
+                        session['lut_verified'] = True
                     status['runtime_modules'] = runtime_modules(runtime)
             status['status'] = 'completed'
     except BaseException as error:

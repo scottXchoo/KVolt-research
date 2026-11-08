@@ -12,7 +12,7 @@
 
 열 정의·단위·격자·출처·SHA-256은 `data/luts/README.md`를 확인한다. 향후 LUT 분석·수치 답변은 이 파일들을 우선 조회하며, 과거 실험 재현을 명시적으로 요청받은 경우에만 해당 과거 묶음을 사용한다. 형제 체크아웃 `KVolt-lut-source`의 AGX2 repeat5 묶음을 최신값으로 간주하지 않는다.
 
-이 세 파일은 AGX1 경량 배열 형식이다. 기존 `MeasuredLUTRepository`의 AGX2 봉인 묶음 계약과 구분한다. 원본 manifest와 FP16 목표 참조는 이 세 파일에 포함되지 않으므로, 최신 파일의 배치만으로 Runtime 로더 전환·장치 간 호환성·기존 적격성 검증의 승계를 주장하지 않는다.
+이 세 파일은 AGX1 경량 배열 형식이다. 원본 manifest는 AGX1에서 회수한 `data/luts/latest/manifest.json`으로 보존한다. `CompactLUTRepository`와 명시적인 `--reference-lut-dir`를 사용하며, 기존 `MeasuredLUTRepository`의 AGX2 봉인 묶음 계약은 유지한다. 최신 AGX1 자료에 같은 캠페인의 전체 FP16 목표 참조가 포함된 것은 아니다. AGX2에 적용할 때는 최신 AGX1 예측과 기존 AGX2 목표를 별도 출처로 기록하는 development 실행으로 구분한다. 최신 파일의 배치나 로더 연결만으로 장치 간 정확성·SLO 또는 기존 적격성의 승계를 주장하지 않는다.
 
 ## 1. 연구 문서 확인
 
