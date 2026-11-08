@@ -45,29 +45,32 @@ run. EOS takes precedence over Nmax=1. `--dc-elapsed-ns` may be omitted on skip;
 if supplied it is recorded as not applied. Full LUT support preflight still runs.
 An active DC without this time is rejected before source loading or lookup.
 
-After full-support preflight, PC first queries the FP16 target, reads its
-injected screening clock, then queries target-eligible Prefill details and reads
-the completed-lookup clock. With t0=0, both injected readings equal the assumed
-PC elapsed ns. `selection_rule=target_ttft` uses the target itself as `budget_s`:
-PC elapsed time is recorded without subtracting it from the candidate threshold.
-PC chooses minimum raw energy among predictions with TTFT at most that target,
-or uses the existing fastest-TTFT fallback when none qualify. Active DC still
-performs Quality, Kneedle, Decode and target queries before its injected clock,
-with t1=0 and td equal to the assumed DC elapsed ns, and subtracts its amortized
-elapsed time from the Decode target. These are separate synthetic phase origins,
-not a request timeline. No time is measured by this diagnostic and no value is
-rounded before selection.
+After full-support preflight, PC uses t0=0, queries the FP16 Reference target,
+and immediately reads `tp_ns` from the injected clock. It computes
+`elapsed_ns=tp_ns-t0_ns`, then fixes
+`budget_s=target_s-elapsed_ns/1_000_000_000`. It queries only budget-eligible
+Prefill details (or all global fastest ties for fallback), validates them and
+records `lookup_end_ns`. `prefilter_ns` aliases `tp_ns`. Both injected readings
+equal the assumed PC elapsed ns; lookup completion does not reduce the budget
+again. `selection_rule=reference_budget` selects minimum raw energy among rows
+with `ttft_s <= budget_s`, or the existing fastest-TTFT fallback when none pass.
+Finite zero and negative budgets remain unchanged. Active DC still performs
+Quality, Kneedle, Decode and target queries before its injected clock, with t1=0
+and td equal to the assumed DC elapsed ns, subtracting amortized elapsed time
+from its target. These are separate synthetic origins, not a request timeline.
+No time is measured by this diagnostic; no value is rounded before selection.
 
 Each successful invocation prints one JSON record to stdout, even with
 `--output`. The schema is `kvolt.policy_diagnostic.v1`, record type
 `policy_diagnostic`, with `synthetic_assumptions=true`, `predictions_only=true`
 and `measurements=null`. Source kind (`measured` or `synthetic`) is independent
 of these synthetic timing/token assumptions. `prefill` records only the detailed
-target-eligible candidates, or all global fastest TTFT ties for a fallback;
+budget-eligible candidates, or all global fastest TTFT ties for a fallback;
 active `decode` preserves five raw Quality rows, Knee result/reasons,
 40 candidate records, target, budget, selected prediction, flags and reasons.
-PC's target and budget are equal under the target-threshold policy; historical
-PC records used the Method's elapsed-time-adjusted Bp. DC retains tau_d/Bd. A skipped DC
+PC's budget uses the Reference-time boundary. Historical `target_ttft` records
+used a direct target; unmarked records used their post-lookup elapsed-time Bp.
+DC retains tau_d/Bd. A skipped DC
 retains null target/budget/elapsed/td/selection/Knee/feasibility and empty rows.
 Prediction feasibility is not an observed TTFT/TPOT SLO result.
 

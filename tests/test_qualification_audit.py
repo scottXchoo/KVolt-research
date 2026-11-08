@@ -232,6 +232,71 @@ def test_audit_target_prefill_checks_exact_filtered_set_against_repository(fallb
             audit_policy(result, repository)
 
 
+def reference_budget_result(*, fallback=False, budget=.75):
+    result = target_prefill_result(fallback=fallback)
+    pc = result['decisions']['prefill']
+    elapsed_ns = round((pc['target_s']-budget)*1_000_000_000)
+    tp = result['timing']['t0_ns'] + elapsed_ns
+    pc.update(selection_rule='reference_budget', tp_ns=tp, prefilter_ns=tp, elapsed_ns=elapsed_ns,
+              budget_s=pc['target_s']-elapsed_ns/1e9, lookup_end_ns=tp+550_000_000)
+    result['device']['prefill'].update(start_ns=tp+560_000_000, end_ns=tp+570_000_000)
+    result['timing']['t1_ns'] = tp+600_000_000
+    return result
+
+
+@pytest.mark.parametrize('fallback,budget', [(False, .75), (True, .75), (True, 0.0), (True, -.2)])
+def test_audit_reference_budget_uses_reference_boundary_once(fallback, budget):
+    audit_policy(reference_budget_result(fallback=fallback, budget=budget))
+
+
+@pytest.mark.parametrize('mutation', ['target_budget', 'double_subtraction', 'alias',
+    'end_before_tp', 'end_boolean', 'end_float', 'end_missing', 'apply_before_lookup',
+    'elapsed', 'boolean_budget', 'missing_row_energy', 'target_only_candidate'])
+def test_audit_reference_budget_rejects_wrong_boundary_or_candidate_evidence(mutation):
+    result = reference_budget_result()
+    pc = result['decisions']['prefill']
+    if mutation == 'target_budget': pc['budget_s'] = pc['target_s']
+    elif mutation == 'double_subtraction': pc['budget_s'] = pc['target_s']-(pc['lookup_end_ns']-pc['t0_ns'])/1e9
+    elif mutation == 'alias': pc['prefilter_ns'] -= 1
+    elif mutation == 'end_before_tp': pc['lookup_end_ns'] = pc['tp_ns']-1
+    elif mutation == 'end_boolean': pc['lookup_end_ns'] = True
+    elif mutation == 'end_float': pc['lookup_end_ns'] = float(pc['lookup_end_ns'])
+    elif mutation == 'end_missing': del pc['lookup_end_ns']
+    elif mutation == 'apply_before_lookup': result['device']['prefill']['start_ns'] = pc['lookup_end_ns']-1
+    elif mutation == 'elapsed': pc['elapsed_ns'] += 1
+    elif mutation == 'boolean_budget': pc['budget_s'] = True
+    elif mutation == 'missing_row_energy': pc['candidates'][0]['prediction']['energy_j'] = None
+    elif mutation == 'target_only_candidate': pc['candidates'][0]['prediction']['ttft_s'] = .9
+    with pytest.raises(ValueError):
+        audit_policy(result)
+
+
+@pytest.mark.parametrize('fallback', [False, True])
+@pytest.mark.parametrize('mutation', [None, 'omitted', 'energy', 'time', 'target'])
+def test_audit_reference_budget_matches_exact_sealed_candidate_set(fallback, mutation):
+    from kvolt_runtime.policy.mock import MockLUTRepository
+    from kvolt_runtime.policy.types import FREQUENCIES_MHZ, PERFORMANCE_LENGTHS
+    result = reference_budget_result(fallback=fallback)
+    pc = result['decisions']['prefill']
+    cells = {f: (2.0, 1.0) for f in FREQUENCIES_MHZ}
+    cells.update({408: (.9 if not fallback else 2., 0.),
+                  510: (1.5 if fallback else .4, 5.), 612: (1.5 if fallback else .5, 2.)})
+    repository = MockLUTRepository(
+        prefill={(n, f): cells[f] for n in PERFORMANCE_LENGTHS for f in FREQUENCIES_MHZ},
+        prefill_target={n: 1.0 for n in PERFORMANCE_LENGTHS})
+    if mutation == 'omitted': pc['candidates'] = pc['candidates'][1:]
+    elif mutation == 'energy': pc['candidates'][0]['prediction']['energy_j'] = 6
+    elif mutation == 'time': pc['candidates'][0]['prediction']['ttft_s'] = 1.6 if fallback else .3
+    elif mutation == 'target':
+        pc['target_s'] = 1.1
+        pc['budget_s'] = pc['target_s']-pc['elapsed_ns']/1e9
+    if mutation is None:
+        audit_policy(result, repository)
+    else:
+        with pytest.raises(ValueError, match='sealed LUT|candidate evidence'):
+            audit_policy(result, repository)
+
+
 @pytest.fixture
 def session_bundle(tmp_path):
     def write(relative, value):

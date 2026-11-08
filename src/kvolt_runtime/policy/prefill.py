@@ -4,21 +4,21 @@ import time
 from ..config import require_int
 from ..errors import ContractError
 from .types import (
-    Bracket, LUTRepository, PrefillCandidate, PrefillDecision, PrefillLookup,
+    Bracket, LUTRepository, PrefillCandidate, PrefillDecision, PrefillBudgetLookup,
     PrefillPrediction, elapsed_since, finite, length as validate_length,
 )
 
 
-def _validate_lookup(lookup, requested_length, target):
-    if not isinstance(lookup, PrefillLookup):
-        raise ContractError('Prefill LUT must return PrefillLookup')
+def _validate_lookup(lookup, requested_length, budget):
+    if not isinstance(lookup, PrefillBudgetLookup):
+        raise ContractError('Prefill LUT must return PrefillBudgetLookup')
     if not isinstance(lookup.bracket, Bracket):
         raise ContractError('Prefill lookup requires an interpolation bracket')
     bracket = Bracket(lookup.bracket.lower, lookup.bracket.upper, lookup.bracket.weight)
     # Revalidate even frozen dataclasses supplied by a foreign repository.
-    lookup = PrefillLookup(lookup.length, lookup.predictions, lookup.target_s, bracket)
-    if lookup.length != requested_length or lookup.target_s != target:
-        raise ContractError('Prefill lookup must match requested L and target')
+    lookup = PrefillBudgetLookup(lookup.length, lookup.predictions, lookup.budget_s, bracket)
+    if lookup.length != requested_length or lookup.budget_s != budget:
+        raise ContractError('Prefill lookup must match requested L and budget')
     if not lookup.predictions:
         raise ContractError('Prefill filtered lookup must contain candidates or fastest ties')
     normalized = []
@@ -34,7 +34,7 @@ def _validate_lookup(lookup, requested_length, target):
         normalized.append(prediction)
     if len({row.frequency_mhz for row in normalized}) != len(normalized):
         raise ContractError('Prefill filtered LUT must contain unique frequencies')
-    feasible = [row for row in normalized if row.ttft_s <= target]
+    feasible = [row for row in normalized if row.ttft_s <= budget]
     if feasible and len(feasible) != len(normalized):
         raise ContractError('Prefill filtered LUT mixed passing and rejected candidates')
     if not feasible and len({row.ttft_s for row in normalized}) != 1:
@@ -43,7 +43,7 @@ def _validate_lookup(lookup, requested_length, target):
 
 
 class PrefillController:
-    """Query the target first, then minimize raw energy within that target.
+    """Fix the budget immediately after Reference lookup, then query candidates.
 
     The M3 caller performs full-support preflight before entering this phase.
     This controller does no device/file work or request-result caching.
@@ -57,14 +57,14 @@ class PrefillController:
         validate_length(length)
         require_int(t0_ns, 'Prefill start ns', 0)
         target = finite(self.repo.prefill_target(length), 'Prefill target seconds', positive=True)
-        prefilter_ns = self.clock()
-        elapsed_since(t0_ns, prefilter_ns)
-        predictions = _validate_lookup(self.repo.prefill_within_target(length, target), length, target)
         tp_ns = self.clock()
-        elapsed_since(prefilter_ns, tp_ns)
         elapsed_ns = elapsed_since(t0_ns, tp_ns)
+        budget = target - elapsed_ns / 1_000_000_000
+        predictions = _validate_lookup(self.repo.prefill_within_budget(length, budget), length, budget)
+        lookup_end_ns = self.clock()
+        elapsed_since(tp_ns, lookup_end_ns)
 
-        feasible = tuple(row for row in predictions if row.ttft_s <= target)
+        feasible = tuple(row for row in predictions if row.ttft_s <= budget)
         if feasible:
             selected = min(feasible, key=lambda row: (row.energy_j, row.ttft_s, row.frequency_mhz))
             selection_path = 'energy_min'
@@ -75,7 +75,7 @@ class PrefillController:
 
         candidates = []
         for row in predictions:
-            meets_budget = row.ttft_s <= target
+            meets_budget = row.ttft_s <= budget
             is_selected = row is selected
             reasons = []
             if not meets_budget:
@@ -87,8 +87,8 @@ class PrefillController:
             candidates.append(PrefillCandidate(row, meets_budget, is_selected, tuple(reasons)))
 
         return PrefillDecision(
-            length=length, selected=selected, target_s=target, budget_s=target,
+            length=length, selected=selected, target_s=target, budget_s=budget,
             elapsed_ns=elapsed_ns, selection_path=selection_path,
-            predicted_feasible=selected.ttft_s <= target, candidates=tuple(candidates),
-            t0_ns=t0_ns, tp_ns=tp_ns, prefilter_ns=prefilter_ns,
-            selection_rule='target_ttft')
+            predicted_feasible=selected.ttft_s <= budget, candidates=tuple(candidates),
+            t0_ns=t0_ns, tp_ns=tp_ns, prefilter_ns=tp_ns,
+            selection_rule='reference_budget', lookup_end_ns=lookup_end_ns)

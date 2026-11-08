@@ -10,7 +10,7 @@ from ..config import GROUPS
 from ..errors import ContractError
 from .types import (
     Bracket, DecodeLookup, DecodePrediction, FREQUENCIES_MHZ, LUTError, LUTProvenance,
-    PERFORMANCE_LENGTHS, PrefillLatencyPrediction, PrefillLookup, PrefillPrediction,
+    PERFORMANCE_LENGTHS, PrefillBudgetLookup, PrefillLatencyPrediction, PrefillLookup, PrefillPrediction,
     QUALITY_LENGTHS, QualityPrediction,
     finite, frequency, length as validate_length,
 )
@@ -105,6 +105,17 @@ class _TabulatedLUT:
         """
         target = finite(target_s, 'Prefill target seconds', positive=True)
         bracket = _bracket(length, PERFORMANCE_LENGTHS)
+        predictions = self._prefill_within_threshold(length, target, bracket)
+        return PrefillLookup(length, predictions, target, bracket)
+
+    def prefill_within_budget(self, length: int, budget_s: float) -> PrefillBudgetLookup:
+        """Query a frozen planning budget, retaining zero/negative fallback cases."""
+        budget = finite(budget_s, 'Prefill budget seconds', allow_negative=True)
+        bracket = _bracket(length, PERFORMANCE_LENGTHS)
+        predictions = self._prefill_within_threshold(length, budget, bracket)
+        return PrefillBudgetLookup(length, predictions, budget, bracket)
+
+    def _prefill_within_threshold(self, length, threshold, bracket):
         times = {}
 
         def ttft(frequency_mhz):
@@ -128,21 +139,20 @@ class _TabulatedLUT:
                         upper = middle
                 return lower
 
-            end = prefix_end(target)
+            end = prefix_end(threshold)
             if end == 0:
                 end = prefix_end(ttft(ordered[0]))
             frequencies = tuple(sorted(ordered[:end]))
         else:
-            frequencies = tuple(f for f in FREQUENCIES_MHZ if ttft(f) <= target)
+            frequencies = tuple(f for f in FREQUENCIES_MHZ if ttft(f) <= threshold)
             if not frequencies:
                 fastest = min(times.values())
                 frequencies = tuple(f for f in FREQUENCIES_MHZ if times[f] == fastest)
 
-        predictions = tuple(PrefillPrediction(
+        return tuple(PrefillPrediction(
             length, f, ttft(f), _at(self._prefill[(bracket.lower, f)][1],
                                   self._prefill[(bracket.upper, f)][1], bracket), bracket)
             for f in frequencies)
-        return PrefillLookup(length, predictions, target, bracket)
 
     def _prefill_latencies_at(self, length, bracket):
         return tuple(PrefillLatencyPrediction(

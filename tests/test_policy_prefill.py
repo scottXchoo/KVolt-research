@@ -11,7 +11,7 @@ import pytest
 from kvolt_runtime.errors import ContractError
 from kvolt_runtime.policy.prefill import PrefillController
 from kvolt_runtime.policy.types import (
-    Bracket, FREQUENCIES_MHZ, PrefillLatencyPrediction, PrefillLookup, PrefillPrediction,
+    Bracket, FREQUENCIES_MHZ, PrefillLatencyPrediction, PrefillBudgetLookup, PrefillPrediction,
 )
 
 
@@ -40,8 +40,11 @@ class Repo:
         self.calls.append(('target', length))
         return self.target
 
-    def prefill_within_target(self, length, target):
-        self.calls.append(('within_target', length, target))
+    def prefill_within_target(self, *args):
+        pytest.fail('PC used target instead of Reference-time budget')
+
+    def prefill_within_budget(self, length, target):
+        self.calls.append(('within_budget', length, target))
         if self.lookup is not None:
             return self.lookup
         rows = tuple(row for row in self.rows if row.ttft_s <= target)
@@ -49,9 +52,9 @@ class Repo:
             fastest = min(row.ttft_s for row in self.rows)
             rows = tuple(row for row in self.rows if row.ttft_s == fastest)
         # Preserve malformed foreign rows and wrappers for controller validation.
-        lookup = object.__new__(PrefillLookup)
+        lookup = object.__new__(PrefillBudgetLookup)
         for name, value in (('length', length), ('predictions', rows if self.detail_rows is None else self.detail_rows),
-                            ('target_s', target), ('bracket', Bracket(1024, 1024, 0))):
+                            ('budget_s', target), ('bracket', Bracket(1024, 1024, 0))):
             object.__setattr__(lookup, name, value)
         return lookup
 
@@ -71,15 +74,15 @@ def test_target_is_retrieved_before_filtered_query():
     assert repo.calls == [('target', 1024)]
 
 
-def test_filtered_lookup_uses_target_and_records_only_queried_candidates():
+def test_reference_cost_filters_target_passing_rows_and_records_only_budget_candidates():
     repo = Repo(target=2)
-    repo.cell(408, ttft_s=math.nextafter(2.0, math.inf), energy_j=0)
-    repo.cell(510, ttft_s=2.0, energy_j=1)
+    repo.cell(408, ttft_s=1.75, energy_j=0)
+    repo.cell(510, ttft_s=1.5, energy_j=1)
     result = choose(repo, elapsed=500_000_000)
-    assert repo.calls == [('target', 1024), ('within_target', 1024, 2)]
+    assert repo.calls == [('target', 1024), ('within_budget', 1024, 1.5)]
     assert result.selected.frequency_mhz == 510
-    assert result.selection_rule == 'target_ttft'
-    assert result.budget_s == result.target_s == 2
+    assert result.selection_rule == 'reference_budget'
+    assert result.budget_s == 1.5 and result.target_s == 2
     assert [c.prediction.frequency_mhz for c in result.candidates] == list(FREQUENCIES_MHZ[1:])
     assert all(isinstance(c.prediction, PrefillPrediction) for c in result.candidates)
     assert all(c.meets_budget for c in result.candidates)
@@ -92,7 +95,8 @@ def test_lookup_elapsed_time_does_not_remove_energy_winner():
     clocks = iter((500_000_100, 10_000_000_100))
     result = PrefillController(repo, clock=lambda: next(clocks)).choose(1024, 100)
     assert result.prefilter_ns == 500_000_100
-    assert (result.tp_ns, result.elapsed_ns, result.budget_s) == (10_000_000_100, 10_000_000_000, 2)
+    assert (result.tp_ns, result.elapsed_ns, result.budget_s) == (500_000_100, 500_000_000, 1.5)
+    assert result.lookup_end_ns == 10_000_000_100
     assert result.selected.frequency_mhz == 408
     assert result.candidates[0].reasons == ()
 
@@ -107,7 +111,7 @@ def test_fallback_fetches_every_global_fastest_tie_and_keeps_energy_frequency_or
     assert result.selected.frequency_mhz == 816
     assert result.selection_path == 'latency_fallback'
     assert result.predicted_feasible is False
-    assert result.budget_s == repo.target
+    assert result.budget_s == repo.target - 1
     assert all(not c.meets_budget for c in result.candidates)
 
 
@@ -123,7 +127,7 @@ def test_final_lookup_clock_must_be_valid_after_detail_work(bad):
     clocks = iter((100, bad))
     with pytest.raises(ContractError):
         PrefillController(repo, clock=lambda: next(clocks)).choose(1024, 100)
-    assert repo.calls[-1] == ('within_target', 1024, 2.0)
+    assert repo.calls[-1] == ('within_budget', 1024, 2.0)
 
 
 @pytest.mark.parametrize('kind', ['list', 'empty', 'duplicate', 'foreign', 'latency_only',
@@ -144,7 +148,7 @@ def test_foreign_filtered_lookup_rejects_invalid_subset(kind):
     }[kind]
     with pytest.raises(ContractError):
         choose(repo)
-    assert repo.calls[-1] == ('within_target', 1024, .75)
+    assert repo.calls[-1] == ('within_budget', 1024, .75)
 
 
 def test_energy_minimum_filters_fast_expensive_and_slow_cheap_candidates():
@@ -168,7 +172,7 @@ def test_energy_minimum_filters_fast_expensive_and_slow_cheap_candidates():
             record.length = 2048
 
 
-@pytest.mark.parametrize('elapsed,expected_budget', [(0, 0.1), (200_000_000, 0.1)])
+@pytest.mark.parametrize('elapsed,expected_budget', [(0, 0.1), (100_000_000, 0.0), (200_000_000, -0.1)])
 def test_no_feasible_candidate_uses_global_latency_and_preserves_budget(elapsed, expected_budget):
     repo = Repo(target=0.1)
     repo.cell(1122, ttft_s=0.2, energy_j=100)
@@ -211,7 +215,7 @@ def test_tiny_time_difference_is_not_an_approximate_tie(fallback):
 
 
 def test_equal_budget_is_feasible_but_next_binary64_value_is_not():
-    repo = Repo(target=0.5)
+    repo = Repo(target=1)
     repo.cell(408, ttft_s=math.nextafter(0.5, math.inf), energy_j=0)
     repo.cell(1122, ttft_s=0.5, energy_j=1)
     result = choose(repo, elapsed=500_000_000)
@@ -231,16 +235,16 @@ def test_phase_order_measures_lookup_and_target_cost_and_never_calls_other_phase
         return 500_000_100
     result = PrefillController(repo, clock=clock).choose(1024, 100)
     assert repo.calls == [('target', 1024), ('clock', None),
-                          ('within_target', 1024, 2), ('clock', None)]
+                          ('within_budget', 1024, 1.5), ('clock', None)]
     assert result.prefilter_ns == 500_000_100
-    assert result.elapsed_ns == 500_000_000 and result.budget_s == 2
+    assert result.elapsed_ns == 500_000_000 and result.budget_s == 1.5
 
 
 def test_integer_subtraction_preserves_nanoseconds_after_huge_clock_origin():
     t0 = 10**100
     result = choose(Repo(), elapsed=17, t0=t0)
     assert result.elapsed_ns == 17 and type(result.elapsed_ns) is int
-    assert result.budget_s == 2
+    assert result.budget_s == 2 - 17 / 1_000_000_000
     assert (result.t0_ns, result.tp_ns) == (t0, t0 + 17)
 
 
@@ -252,8 +256,8 @@ def test_repeated_requests_repeat_online_lookup_and_target_no_cached_decision():
     repo.target = 0.1
     result = controller.choose(1024, 100)
     assert result.selection_path == 'latency_fallback' and result.selected.frequency_mhz == 1122
-    assert repo.calls == [('target', 1024), ('within_target', 1024, 2),
-                          ('target', 1024), ('within_target', 1024, .1)]
+    assert repo.calls == [('target', 1024), ('within_budget', 1024, 2),
+                          ('target', 1024), ('within_budget', 1024, .1)]
 
 
 @pytest.mark.parametrize('bad', [True, False, None, '1024', 1024.0, 1023, 8193])
@@ -357,7 +361,7 @@ assert PrefillController(MockLUTRepository(), clock=lambda: 0).choose(1024, 0).s
      0.5 * 0.7636938302 + 0.5 * 1.9121312994,
      0.5 * 22.95247488752233 + 0.5 * 70.02650760043105, 'energy_min'),
     (2048, 0, 1.974938814, 1.9121312994, 70.02650760043105, 'energy_min'),
-    (2048, 100_000_000, 1.974938814, 1.9121312994, 70.02650760043105, 'energy_min'),
+    (2048, 100_000_000, 1.974938814, 1.9121312994, 70.02650760043105, 'latency_fallback'),
 ])
 def test_sealed_bundle_manual_small_cases(length, elapsed, target, time, energy, path):
     from kvolt_runtime.policy.lut import MeasuredLUTRepository
@@ -366,16 +370,16 @@ def test_sealed_bundle_manual_small_cases(length, elapsed, target, time, energy,
     if not bundle.is_dir():
         pytest.skip('sealed measured integration unavailable: set KVOLT_LUT_BUNDLE')
     # Values independently transcribed from the sealed source's 1024/2048
-    # knots; 1536 is their midpoint. Only target-eligible detailed candidates remain visible.
+    # knots; 1536 is their midpoint. Only budget-eligible details or global fastest ties remain visible.
     # At 2048 the 1020 MHz row uses less energy (69.42603514426558 J),
     # but its 2.0801904404 s TTFT exceeds the 1.974938814 s reference.
     result = PrefillController(MeasuredLUTRepository(bundle), clock=lambda: elapsed).choose(length, 0)
     assert result.selected.frequency_mhz == 1122
     assert (result.target_s, result.selected.ttft_s, result.selected.energy_j) == (target, time, energy)
-    assert result.budget_s == target
+    assert result.budget_s == target - elapsed / 1_000_000_000
     assert result.selection_path == path
     assert result.predicted_feasible is (path == 'energy_min')
-    assert all(c.meets_budget for c in result.candidates)
+    assert all(c.meets_budget is (path == 'energy_min') for c in result.candidates)
     if length == 2048:
         assert 1020 not in {c.prediction.frequency_mhz for c in result.candidates}
         original = next(row for row in MeasuredLUTRepository(bundle).prefill(length)
@@ -386,22 +390,24 @@ def test_sealed_bundle_manual_small_cases(length, elapsed, target, time, energy,
 @pytest.mark.parametrize('field,bad', [
     ('length', True), ('length', 2048), ('bracket', None),
     ('bracket', Bracket(2048, 2048, 0)),
-    ('bracket', Bracket(1024, 2048, 0)), ('target_s', 2.1),
+    ('bracket', Bracket(1024, 2048, 0)), ('budget_s', 2.1),
+    ('budget_s', True), ('budget_s', None), ('budget_s', math.nan),
+    ('budget_s', math.inf), ('budget_s', -math.inf),
 ])
 def test_filtered_lookup_metadata_is_validated(field, bad):
     repo = Repo()
-    repo.lookup = repo.prefill_within_target(1024, repo.target)
+    repo.lookup = repo.prefill_within_budget(1024, repo.target)
     repo.calls.clear()
     object.__setattr__(repo.lookup, field, bad)
     with pytest.raises(ContractError):
         PrefillController(repo, clock=lambda: 100).choose(1024, 100)
-    assert repo.calls == [('target', 1024), ('within_target', 1024, repo.target)]
+    assert repo.calls == [('target', 1024), ('within_budget', 1024, repo.target)]
 
 
 @pytest.mark.parametrize('bad', [object(), None, {}, ()])
 def test_foreign_filtered_lookup_wrapper_is_rejected(bad):
     repo = Repo()
-    repo.prefill_within_target = lambda *args, **kwargs: bad
+    repo.prefill_within_budget = lambda *args, **kwargs: bad
     with pytest.raises(ContractError):
         PrefillController(repo, clock=lambda: 100).choose(1024, 100)
 
@@ -409,7 +415,7 @@ def test_foreign_filtered_lookup_wrapper_is_rejected(bad):
 @pytest.mark.parametrize('field,bad', [('lower', 1024.0), ('upper', 8193), ('weight', math.nan)])
 def test_corrupted_filtered_lookup_bracket_is_revalidated(field, bad):
     repo = Repo()
-    repo.lookup = repo.prefill_within_target(1024, repo.target)
+    repo.lookup = repo.prefill_within_budget(1024, repo.target)
     object.__setattr__(repo.lookup.bracket, field, bad)
     with pytest.raises(ContractError):
         choose(repo)

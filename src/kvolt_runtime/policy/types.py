@@ -35,15 +35,16 @@ def group(value):
     return value
 
 
-def finite(value, name, *, positive=False, unit_interval=False):
+def finite(value, name, *, positive=False, unit_interval=False, allow_negative=False):
     if type(value) not in (int, float):
         raise ContractError(f'{name} must be a finite binary64 number')
     try:
         result = float(value)
     except (OverflowError, ValueError) as error:
         raise ContractError(f'{name} must be finite') from error
-    if not math.isfinite(result) or result < 0 or (positive and result == 0):
-        raise ContractError(f'{name} must be finite and {"positive" if positive else "nonnegative"}')
+    if not math.isfinite(result) or (result < 0 and (positive or unit_interval or not allow_negative)) or (positive and result == 0):
+        restriction = f' and {"positive" if positive else "nonnegative"}' if positive or unit_interval or not allow_negative else ''
+        raise ContractError(f'{name} must be finite{restriction}')
     if unit_interval and result > 1:
         raise ContractError(f'{name} must be a raw score in [0,1]')
     return result
@@ -166,6 +167,23 @@ class PrefillLookup:
 
 
 @dataclass(frozen=True)
+class PrefillBudgetLookup:
+    """Prefill details filtered by a signed, already computed time budget."""
+
+    length: int
+    predictions: tuple[PrefillPrediction, ...]
+    budget_s: float
+    bracket: Bracket
+
+    def __post_init__(self):
+        length(self.length)
+        object.__setattr__(self, 'budget_s', finite(self.budget_s, 'Prefill budget seconds', allow_negative=True))
+        _bracket(self.bracket, self.length)
+        if type(self.predictions) is not tuple:
+            raise ContractError('Prefill budget predictions must be an immutable tuple')
+
+
+@dataclass(frozen=True)
 class DecodeLookup:
     """Decode predictions and the FP16 goal at one shared length bracket."""
 
@@ -203,6 +221,7 @@ class LUTRepository(Protocol):
     def prefill(self, length: int) -> tuple[PrefillPrediction, ...]: ...
     def prefill_lookup(self, length: int, *, latency_only: bool = False) -> PrefillLookup: ...
     def prefill_within_target(self, length: int, target_s: float) -> PrefillLookup: ...
+    def prefill_within_budget(self, length: int, budget_s: float) -> PrefillBudgetLookup: ...
     def prefill_latencies(self, length: int) -> tuple[PrefillLatencyPrediction, ...]: ...
     def prefill_candidates(self, length: int, frequencies: tuple[int, ...]) -> tuple[PrefillPrediction, ...]: ...
     def quality(self, length: int) -> tuple[QualityPrediction, ...]: ...
@@ -265,7 +284,8 @@ class PrefillDecision:
     t0_ns: int
     tp_ns: int
     prefilter_ns: int
-    selection_rule: str = 'target_ttft'
+    selection_rule: str = 'reference_budget'
+    lookup_end_ns: int | None = None
 
 
 @dataclass(frozen=True)

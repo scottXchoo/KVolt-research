@@ -188,8 +188,8 @@ def close_energy(actual, exact):
     require(abs(actual-expected) <= max(1e-10, abs(expected)*1e-12), 'independent energy mismatch')
 
 
-def _audit_target_prefill(pc, timing, request, candidates, repository):
-    """Check sparse target-based evidence; a repository proves its completeness."""
+def _audit_sparse_prefill(pc, timing, request, candidates, repository):
+    """Check sparse PC evidence; a repository proves candidate completeness."""
     require(type(pc.get('candidates')) is list and bool(candidates)
             and all(type(row) is dict for row in candidates), 'prefill candidate coverage')
     require(all(type(row.get('frequency_mhz')) is int and row['frequency_mhz'] in FREQUENCIES
@@ -198,13 +198,19 @@ def _audit_target_prefill(pc, timing, request, candidates, repository):
             'prefill candidate coverage')
     require(type(pc.get('target_s')) in (int, float) and math.isfinite(pc['target_s'])
             and pc['target_s'] > 0
-            and type(pc.get('budget_s')) in (int, float) and math.isfinite(pc['budget_s'])
-            and pc['budget_s'] == pc['target_s'], 'PC target budget')
+            and type(pc.get('budget_s')) in (int, float) and math.isfinite(pc['budget_s']), 'PC target/budget')
     require(all(type(pc.get(field)) is int for field in ('prefilter_ns', 'tp_ns', 'elapsed_ns', 't0_ns'))
             and type(timing['t0_ns']) is int
             and pc['t0_ns'] == timing['t0_ns']
             and 0 <= timing['t0_ns'] <= pc['prefilter_ns'] <= pc['tp_ns']
             and pc['elapsed_ns'] == pc['tp_ns']-timing['t0_ns'], 'PC screening clock boundary')
+    if pc['selection_rule'] == 'reference_budget':
+        require(pc['prefilter_ns'] == pc['tp_ns']
+                and type(pc.get('lookup_end_ns')) is int and pc['tp_ns'] <= pc['lookup_end_ns'],
+                'PC Reference/lookup clock boundary')
+        require(pc['budget_s'] == pc['target_s']-pc['elapsed_ns']/1e9, 'PC Reference budget')
+    else:
+        require(pc['budget_s'] == pc['target_s'], 'PC target budget')
     brackets = []
     for row in candidates:
         require(set(row) == {'length', 'frequency_mhz', 'ttft_s', 'energy_j', 'bracket'}
@@ -221,14 +227,14 @@ def _audit_target_prefill(pc, timing, request, candidates, repository):
                 and weight == (0.0 if lo == hi else (row['length']-lo)/(hi-lo)), 'invalid Prefill bracket')
         brackets.append(bracket)
     require(all(bracket == brackets[0] for bracket in brackets), 'Prefill bracket mismatch')
-    active = [row for row in candidates if row['ttft_s'] <= pc['target_s']]
+    active = [row for row in candidates if row['ttft_s'] <= pc['budget_s']]
     require(len(active) == len(candidates) if active else len({row['ttft_s'] for row in candidates}) == 1,
             'Prefill target lookup candidate evidence')
     # Without the sealed repository, only internal consistency can be checked.
     # Omitted passing rows or omitted global fastest ties require source evidence.
     if repository is not None:
         full = [asdict(row) for row in repository.prefill(request['length'])]
-        expected = [row for row in full if row['ttft_s'] <= pc['target_s']]
+        expected = [row for row in full if row['ttft_s'] <= pc['budget_s']]
         if not expected:
             fastest = min(row['ttft_s'] for row in full)
             expected = [row for row in full if row['ttft_s'] == fastest]
@@ -255,16 +261,16 @@ def _audit_target_prefill(pc, timing, request, candidates, repository):
 def audit_policy(result, repository=None):
     pc, dc = result['decisions']['prefill'], result['decisions']['decode']
     timing, request = result['timing'], result['request']
-    require('selection_rule' not in pc or pc['selection_rule'] == 'target_ttft', 'unknown PC selection rule')
-    if pc.get('selection_rule') == 'target_ttft':
+    require('selection_rule' not in pc or pc['selection_rule'] in ('target_ttft', 'reference_budget'), 'unknown PC selection rule')
+    if pc.get('selection_rule') in ('target_ttft', 'reference_budget'):
         require(type(pc.get('candidates')) is list
                 and all(type(record) is dict and type(record.get('prediction')) is dict
                         and 'length' in record['prediction'] for record in pc['candidates']),
                 'invalid Prefill candidate evidence')
     candidates = [row['prediction'] for row in pc['candidates']]
     require(all(row['length'] == request['length'] for row in candidates), 'Prefill LUT length mismatch')
-    if pc.get('selection_rule') == 'target_ttft':
-        _audit_target_prefill(pc, timing, request, candidates, repository)
+    if pc.get('selection_rule') in ('target_ttft', 'reference_budget'):
+        _audit_sparse_prefill(pc, timing, request, candidates, repository)
     else:
         require(len(candidates) == 8 and {row['frequency_mhz'] for row in candidates} == FREQUENCIES,
                 'prefill candidate coverage')
@@ -312,7 +318,8 @@ def audit_policy(result, repository=None):
     require(pc['selected'] == min(active or fallback, key=key), 'PC raw-energy/tie selection')
     require(pc['selection_path'] == ('energy_min' if active else 'latency_fallback'), 'PC branch')
     prefill_receipt = result['device']['prefill']
-    require(pc['tp_ns'] <= prefill_receipt['start_ns'] <= prefill_receipt['end_ns'] < timing['t1_ns'],
+    apply_after = pc['lookup_end_ns'] if pc.get('selection_rule') == 'reference_budget' else pc['tp_ns']
+    require(apply_after <= prefill_receipt['start_ns'] <= prefill_receipt['end_ns'] < timing['t1_ns'],
             'prefill clock application outside measured PC/Prefill interval')
     if len(result['generation']['token_ids']) == 1:
         require(dc['status'] == 'skipped' and dc['selected'] is None and not dc['candidates'], 'DC skip')
