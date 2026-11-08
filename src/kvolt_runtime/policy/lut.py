@@ -120,9 +120,7 @@ class _TabulatedLUT:
 
         def ttft(frequency_mhz):
             if frequency_mhz not in times:
-                times[frequency_mhz] = _at(
-                    self._prefill[(bracket.lower, frequency_mhz)][0],
-                    self._prefill[(bracket.upper, frequency_mhz)][0], bracket)
+                times[frequency_mhz] = self._prefill_value(length, frequency_mhz, 0, bracket)
             return times[frequency_mhz]
 
         if self._prefill_time_monotone:
@@ -150,14 +148,12 @@ class _TabulatedLUT:
                 frequencies = tuple(f for f in FREQUENCIES_MHZ if times[f] == fastest)
 
         return tuple(PrefillPrediction(
-            length, f, ttft(f), _at(self._prefill[(bracket.lower, f)][1],
-                                  self._prefill[(bracket.upper, f)][1], bracket), bracket)
+            length, f, ttft(f), self._prefill_value(length, f, 1, bracket), bracket)
             for f in frequencies)
 
     def _prefill_latencies_at(self, length, bracket):
         return tuple(PrefillLatencyPrediction(
-            length, f, _at(self._prefill[(bracket.lower, f)][0],
-                           self._prefill[(bracket.upper, f)][0], bracket), bracket)
+            length, f, self._prefill_value(length, f, 0, bracket), bracket)
             for f in FREQUENCIES_MHZ)
 
     def prefill_candidates(self, length: int, frequencies: tuple[int, ...]) -> tuple[PrefillPrediction, ...]:
@@ -171,8 +167,20 @@ class _TabulatedLUT:
         return self._prefill_candidates_at(length, tuple(sorted(frequencies)), bracket)
 
     def _prefill_candidates_at(self, length, frequencies, bracket):
-        return tuple(PrefillPrediction(length, f, *self._pair_at(self._prefill, (f,), bracket), bracket)
+        return tuple(PrefillPrediction(length, f,
+                                      self._prefill_value(length, f, 0, bracket),
+                                      self._prefill_value(length, f, 1, bracket), bracket)
                      for f in frequencies)
+
+    def _prefill_value(self, length, frequency_mhz, metric, bracket):
+        """Read one metric, allowing exact-length online observations to override it."""
+        return _at(self._prefill[(bracket.lower, frequency_mhz)][metric],
+                   self._prefill[(bracket.upper, frequency_mhz)][metric], bracket)
+
+    def _decode_value(self, length, group, frequency_mhz, metric, bracket):
+        """Keep latency screening independent from candidate energy evaluation."""
+        return _at(self._decode[(bracket.lower, group, frequency_mhz)][metric],
+                   self._decode[(bracket.upper, group, frequency_mhz)][metric], bracket)
 
     def decode_lookup(self, length: int) -> DecodeLookup:
         """Read all Decode predictions and the Reference goal at one bracket."""
@@ -208,8 +216,7 @@ class _TabulatedLUT:
         def tpot(group, frequency_mhz):
             key = (group, frequency_mhz)
             if key not in times:
-                times[key] = _at(self._decode[(bracket.lower, *key)][0],
-                                 self._decode[(bracket.upper, *key)][0], bracket)
+                times[key] = self._decode_value(length, group, frequency_mhz, 0, bracket)
             return times[key]
 
         pairs = tuple((group, f) for group in sorted(groups) for f in FREQUENCIES_MHZ
@@ -220,8 +227,7 @@ class _TabulatedLUT:
             pairs = tuple(pair for pair in all_pairs if times[pair] == fastest)
         return tuple(DecodePrediction(
             length, group, f, times[(group, f)],
-            _at(self._decode[(bracket.lower, group, f)][1],
-                self._decode[(bracket.upper, group, f)][1], bracket), bracket)
+            self._decode_value(length, group, f, 1, bracket), bracket)
             for group, f in pairs)
 
     def decode(self, length: int) -> tuple[DecodePrediction, ...]:
@@ -229,7 +235,10 @@ class _TabulatedLUT:
         return self._decode_at(length, bracket)
 
     def _decode_at(self, length, bracket):
-        return tuple(DecodePrediction(length, g, f, *self._pair_at(self._decode, (g, f), bracket), bracket) for g in GROUPS for f in FREQUENCIES_MHZ)
+        return tuple(DecodePrediction(length, g, f,
+                                      self._decode_value(length, g, f, 0, bracket),
+                                      self._decode_value(length, g, f, 1, bracket), bracket)
+                     for g in GROUPS for f in FREQUENCIES_MHZ)
 
     def quality(self, length: int) -> tuple[QualityPrediction, ...]:
         bracket = _bracket(length, QUALITY_LENGTHS)
