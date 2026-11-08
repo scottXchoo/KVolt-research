@@ -22,7 +22,9 @@ generators, arrays, nonfinite values and values outside G are invalid. Valid
 endpoints and multiple Knees are preserved. An empty supported container returns
 `not_found/no_knee`. Detector exceptions or invalid returns yield
 `error_recovered`, empty groups, and error type/message with `detector_error`.
-`KeyboardInterrupt` and `SystemExit` propagate. Empty groups cause DC to use all G.
+`KeyboardInterrupt` and `SystemExit` propagate. DC preserves these detector
+results: normal empty/flat results activate the median G, while detector recovery
+activates all G.
 
 `DecodeController(repo, knee_adapter=None, *, clock=time.monotonic_ns)` constructs
 the actual adapter by default. `choose(L,nmax,first_token_id,t1_ns)` validates
@@ -60,11 +62,15 @@ binary64, and leaves foreign source objects unchanged. Thus a foreign integer
 rules. Invalid bracket metadata remains fatal before detector/clock access at
 the affected lookup boundary; it is never a detector recovery.
 
-Detected Knees restrict the initial active G set; `not_found` and
-`error_recovered` use all five G. Eligible combinations satisfy the active G
+Detected Knees restrict the initial active G set. For `not_found` (`no_knee` or
+`flat_quality`), DC activates only the middle original candidate in sorted
+`GROUPS=(8,16,32,64,128)`: G=32. This is the 2026-11-08 user revision to Method's
+previous all-G normal-miss rule. The recorded Knee remains `not_found` with empty
+detected groups; DC does not fabricate a detected Knee. `error_recovered` still
+activates all five G. Eligible combinations satisfy the active G
 condition and `tpot_s <= budget_s`. A nonempty eligible set minimizes
 `(energy_j_per_token,-quality,tpot_s,G,frequency_mhz)`. Otherwise DC releases the
-Knee restriction and minimizes all 40 candidates by
+active G restriction, including a median-only restriction, and minimizes all 40 candidates by
 `(tpot_s,-quality,energy_j_per_token,G,frequency_mhz)`. Both paths compare full
 Python binary64 values directly, with no rounding, approximate ties or energy
 normalization. `predicted_feasible` is the chosen TPOT comparison with the budget;
@@ -74,8 +80,9 @@ actual measured SLO result.
 Active decisions use `status='selected'` and selection path `energy_min` or
 `latency_fallback`. The frozen decision preserves raw Quality predictions, Knee
 status, target, budget, integer times, selected Quality, and all 40 candidate
-records. Flags describe the original Knee/time filter even after fallback, so a
-selected fallback outside Knees has `eligible=False`. Reasons include
+records. Flags describe the original active G/time filter even after fallback, so a
+selected fallback outside the detected or median G has `eligible=False`. The
+existing `active_knee` flag records membership in that active G set. Reasons include
 `knee_excluded`, `time_budget_exceeded`, `not_selected`, and for a selected fallback
 `latency_fallback`. These are prediction/selection reasons, not technical request
 invalidity. M2 performs no GPU imports, model calls, frequency changes, file

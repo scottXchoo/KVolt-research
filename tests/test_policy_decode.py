@@ -83,14 +83,64 @@ def test_normal_energy_choice_and_full_explanation():
     assert 'knee_excluded' in outside.reasons
 
 
-@pytest.mark.parametrize('status', ['not_found', 'error_recovered'])
-def test_not_found_and_recovery_apply_time_condition_to_all_groups(status):
+@pytest.mark.parametrize('flat', [False, True], ids=['no_knee', 'flat_quality'])
+def test_normal_miss_uses_median_group_and_preserves_detection_and_full_trace(flat):
+    repo = Repo(scores=(0.7,) * 5 if flat else (0.9, 0.8, 0.7, 0.6, 0.5))
+    calls = []
+    class EmptyLocator:
+        all_knees = []
+    def locator(**kwargs):
+        calls.append(kwargs)
+        return EmptyLocator()
+    # Cheaper outside G=32 must not defeat the median restriction. Within G=32,
+    # the cheapest frequency misses the budget, and the fastest costs more.
+    repo.cell(128, 1122, energy_j_per_token=0.1)
+    repo.cell(32, 408, tpot_s=3, energy_j_per_token=0.2)
+    repo.cell(32, 612, tpot_s=2, energy_j_per_token=2)
+    repo.cell(32, 1122, tpot_s=0.1, energy_j_per_token=3)
+    result = choose(repo, KneeAdapter(locator))
+    assert pair(result) == (32, 612)
+    assert result.selection_path == 'energy_min' and result.predicted_feasible is True
+    assert result.selected_quality == 0.7
+    assert result.knee == KneeResult('not_found', reason='flat_quality' if flat else 'no_knee')
+    assert len(calls) == (0 if flat else 1)
+    assert len(result.candidates) == 40 and sum(c.selected for c in result.candidates) == 1
+    assert sum(c.active_knee for c in result.candidates) == 8
+    assert sum(c.eligible for c in result.candidates) == 7
+    for candidate in result.candidates:
+        active = candidate.prediction.group == 32
+        assert candidate.active_knee is active
+        assert candidate.eligible is (active and candidate.meets_budget)
+        assert ('knee_excluded' in candidate.reasons) is (not active)
+    rejected = next(c for c in result.candidates if
+                    (c.prediction.group, c.prediction.frequency_mhz) == (32, 408))
+    assert rejected.meets_budget is False and 'time_budget_exceeded' in rejected.reasons
+
+
+def test_detector_recovery_applies_time_condition_to_all_groups():
     repo = Repo()
     repo.cell(128, 1122, energy_j_per_token=0.1)
-    result = choose(repo, Adapter(KneeResult(status, reason='test')))
+    result = choose(repo, Adapter(KneeResult('error_recovered', reason='test')))
     assert pair(result) == (128, 1122)
     assert all(c.active_knee for c in result.candidates)
-    assert result.knee.status == status
+    assert result.knee.status == 'error_recovered'
+
+
+@pytest.mark.parametrize('reason', ['no_knee', 'flat_quality'])
+def test_empty_median_time_set_uses_global_latency_fallback(reason):
+    repo = Repo(target=0.5)
+    repo.cell(8, 408, tpot_s=0.3, energy_j_per_token=0.1)
+    repo.cell(128, 1020, tpot_s=0.2, energy_j_per_token=100)
+    result = choose(repo, Adapter(KneeResult('not_found', reason=reason)))
+    assert pair(result) == (128, 1020)
+    assert result.selection_path == 'latency_fallback' and result.predicted_feasible is True
+    assert result.knee == KneeResult('not_found', reason=reason)
+    assert len(result.candidates) == 40 and not any(c.eligible for c in result.candidates)
+    assert sum(c.active_knee for c in result.candidates) == 8
+    selected = next(c for c in result.candidates if c.selected)
+    assert selected.active_knee is False and selected.eligible is False
+    assert selected.meets_budget is True
+    assert selected.reasons == ('knee_excluded', 'latency_fallback')
 
 
 def test_empty_knee_time_set_releases_knee_and_fallback_can_still_meet_budget():
@@ -205,12 +255,12 @@ def test_all_five_quality_and_forty_decode_rows_are_mandatory(mode):
 def test_exact_ties_use_quality_then_energy_or_latency_then_group_frequency(fallback):
     repo = Repo(scores=(0.5, 0.9, 0.9, 0.8, 0.7), target=0.1 if fallback else 2)
     # Every primary metric tied; group16 wins Q, then beats group32 by G, f408 by f.
-    assert pair(choose(repo)) == (16, 408)
+    assert pair(choose(repo, Adapter(KneeResult('found', GROUPS)))) == (16, 408)
     if fallback:
         repo.cell(32, 510, energy_j_per_token=9)
     else:
         repo.cell(32, 510, tpot_s=0.9)
-    assert pair(choose(repo)) == (32, 510)
+    assert pair(choose(repo, Adapter(KneeResult('found', GROUPS)))) == (32, 510)
 
 
 @pytest.mark.parametrize('fallback', [False, True])
@@ -220,7 +270,7 @@ def test_single_binary64_step_beats_quality_tiebreak(fallback):
         repo.cell(128, 1122, tpot_s=math.nextafter(1.0, 0))
     else:
         repo.cell(128, 1122, energy_j_per_token=math.nextafter(10.0, 0))
-    assert pair(choose(repo)) == (128, 1122)
+    assert pair(choose(repo, Adapter(KneeResult('found', GROUPS)))) == (128, 1122)
 
 
 @pytest.mark.parametrize('field,fallback', [('energy_j_per_token', False),
@@ -234,7 +284,7 @@ def test_foreign_integer_metrics_use_canonical_binary64_ties_and_trace(field, fa
     object.__setattr__(source, field, base + 1)
     object.__setattr__(source.bracket, 'weight', 0)
     # The odd integer rounds to 2**53 in binary64, so 408 wins the final f tie.
-    result = choose(repo)
+    result = choose(repo, Adapter(KneeResult('found', GROUPS)))
     assert pair(result) == (8, 408)
     assert result.selection_path == ('latency_fallback' if fallback else 'energy_min')
     assert getattr(result.selected, field) == float(base)
@@ -256,7 +306,7 @@ def test_canonical_quality_is_used_for_detector_selection_and_trace_without_sour
             assert rows[0] is not source and rows[0].bracket is not source.bracket
             assert type(rows[0].score) is type(rows[0].bracket.weight) is float
             return super().detect(rows)
-    result = choose(repo, Inspect())
+    result = choose(repo, Inspect(KneeResult('found', GROUPS)))
     assert pair(result) == (8, 408)
     assert result.quality[0] is not source and result.quality[0].bracket is not source.bracket
     assert type(result.selected_quality) is float
@@ -284,7 +334,7 @@ def test_budget_boundary_is_exact_and_input_order_does_not_change_choice():
     repo.cell(32, 612, tpot_s=1, energy_j_per_token=1)
     repo.rows = tuple(reversed(repo.rows))
     repo.qualities = tuple(reversed(repo.qualities))
-    assert pair(choose(repo)) == (32, 612)
+    assert pair(choose(repo, Adapter(KneeResult('found', GROUPS)))) == (32, 612)
 
 
 def test_default_adapter_is_set_up_at_controller_construction(monkeypatch):
@@ -316,7 +366,7 @@ def test_sealed_published_table_manual_choices_with_explicit_no_knee():
     expected = [(1024, (128, 1122), 'latency_fallback'),
                 (1377, (128, 1122), 'latency_fallback'),
                 (4096, (128, 1020), 'latency_fallback'),
-                (8192, (128, 918), 'energy_min')]
+                (8192, (32, 918), 'energy_min')]
     for length, expected_pair, path in expected:
         result = controller.choose(length, 128, 123, 100)
         assert pair(result) == expected_pair and result.selection_path == path
