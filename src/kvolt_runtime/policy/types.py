@@ -74,6 +74,25 @@ class Bracket:
 
 
 @dataclass(frozen=True)
+class PrefillLatencyPrediction:
+    """Time-only screening evidence; an unqueried energy remains null."""
+
+    length: int
+    frequency_mhz: int
+    ttft_s: float
+    bracket: Bracket
+    energy_j: None = None
+
+    def __post_init__(self):
+        length(self.length)
+        frequency(self.frequency_mhz)
+        object.__setattr__(self, 'ttft_s', finite(self.ttft_s, 'TTFT seconds', positive=True))
+        _bracket(self.bracket, self.length)
+        if self.energy_j is not None:
+            raise ContractError('latency-only Prefill prediction cannot contain energy')
+
+
+@dataclass(frozen=True)
 class PrefillPrediction:
     length: int
     frequency_mhz: int
@@ -130,6 +149,40 @@ def _bracket(value, requested):
 
 
 @dataclass(frozen=True)
+class PrefillLookup:
+    """Prefill predictions and the FP16 goal at one shared length bracket."""
+
+    length: int
+    predictions: tuple[PrefillPrediction, ...] | tuple[PrefillLatencyPrediction, ...]
+    target_s: float
+    bracket: Bracket
+
+    def __post_init__(self):
+        length(self.length)
+        object.__setattr__(self, 'target_s', finite(self.target_s, 'Prefill target seconds', positive=True))
+        _bracket(self.bracket, self.length)
+        if type(self.predictions) is not tuple:
+            raise ContractError('Prefill lookup predictions must be an immutable tuple')
+
+
+@dataclass(frozen=True)
+class DecodeLookup:
+    """Decode predictions and the FP16 goal at one shared length bracket."""
+
+    length: int
+    predictions: tuple[DecodePrediction, ...]
+    target_s: float
+    bracket: Bracket
+
+    def __post_init__(self):
+        length(self.length)
+        object.__setattr__(self, 'target_s', finite(self.target_s, 'Decode target seconds/token', positive=True))
+        _bracket(self.bracket, self.length)
+        if type(self.predictions) is not tuple:
+            raise ContractError('Decode lookup predictions must be an immutable tuple')
+
+
+@dataclass(frozen=True)
 class LUTProvenance:
     kind: str
     source_device: str
@@ -148,8 +201,12 @@ class LUTRepository(Protocol):
         ...
 
     def prefill(self, length: int) -> tuple[PrefillPrediction, ...]: ...
+    def prefill_lookup(self, length: int, *, latency_only: bool = False) -> PrefillLookup: ...
+    def prefill_latencies(self, length: int) -> tuple[PrefillLatencyPrediction, ...]: ...
+    def prefill_candidates(self, length: int, frequencies: tuple[int, ...]) -> tuple[PrefillPrediction, ...]: ...
     def quality(self, length: int) -> tuple[QualityPrediction, ...]: ...
     def decode(self, length: int) -> tuple[DecodePrediction, ...]: ...
+    def decode_lookup(self, length: int) -> DecodeLookup: ...
     def prefill_target(self, length: int) -> float: ...
     def decode_target(self, length: int) -> float: ...
 
@@ -177,7 +234,7 @@ class KneeResult:
 
 @dataclass(frozen=True)
 class PrefillCandidate:
-    prediction: PrefillPrediction
+    prediction: PrefillPrediction | PrefillLatencyPrediction
     meets_budget: bool
     selected: bool
     reasons: tuple[str, ...] = ()
@@ -206,6 +263,7 @@ class PrefillDecision:
     candidates: tuple[PrefillCandidate, ...]
     t0_ns: int
     tp_ns: int
+    prefilter_ns: int
 
 
 @dataclass(frozen=True)

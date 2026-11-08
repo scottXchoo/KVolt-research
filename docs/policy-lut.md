@@ -78,8 +78,24 @@ is validated at construction. `preflight(L)` validates integer length support
 without calling online lookup, interpolation or detection. Full support is
 required even when a later controller skips Decode for Nmax=1 or first EOS.
 
-Online methods are `prefill(L)`, `quality(L)`, `decode(L)`, `prefill_target(L)`
-and `decode_target(L)`. Predictions are immutable and retain the request length,
+Online controllers use `prefill_lookup(L, latency_only=True)` and
+`decode_lookup(L)`. Their frozen `PrefillLookup`/`DecodeLookup` results contain
+`length`, immutable `predictions`, `target_s` and `bracket`. Each combined query
+computes the performance-length bracket once and reuses it for both predictions
+and the frozen Reference target. `prefill_lookup(L)` defaults to all eight full
+Prefill predictions; latency-only mode returns all eight TTFTs without energy.
+`decode_lookup(L)` returns all 40 predictions and the Decode target. Quality
+remains a separate `quality(L)` query before Knee detection.
+
+Compatibility methods `prefill(L)`, `decode(L)`, `prefill_target(L)`,
+`decode_target(L)` and `prefill_latencies(L)` retain their existing results.
+Prefill also exposes `prefill_candidates(L, frequencies)`, which returns details only for the
+requested immutable tuple of unique original frequencies. Detail results are
+sorted by frequency; an empty tuple returns no rows. `prefill(L)` retains its
+full-eight-row contract for offline consumers. All measured, compact and mock
+repositories share these methods. See [PC order and budgets](policy-prefill.md)
+for combined target/TTFT screening and the fallback exception. Predictions are
+immutable and retain the request length,
 original candidate and `Bracket(lower, upper, weight)`. Exact knots return the
 original Python binary64 value directly; intermediate values use
 `(1 - weight) * lower_value + weight * upper_value`. Only length is interpolated.

@@ -9,7 +9,7 @@ from kvolt_runtime.errors import ContractError
 from kvolt_runtime.policy.decode import DecodeController
 from kvolt_runtime.policy.knee import KneeAdapter
 from kvolt_runtime.policy.types import (
-    Bracket, DecodePrediction, FREQUENCIES_MHZ, KneeResult, QualityPrediction,
+    Bracket, DecodeLookup, DecodePrediction, FREQUENCIES_MHZ, KneeResult, QualityPrediction,
 )
 
 
@@ -17,6 +17,7 @@ class Repo:
     def __init__(self, scores=(0.9, 0.8, 0.7, 0.6, 0.5), target=2.0):
         self.calls = []
         self.target = target
+        self.lookup = None
         self.qualities = tuple(QualityPrediction(1024, g, q, Bracket(1024, 1024, 0))
                                for g, q in zip(GROUPS, scores))
         self.rows = tuple(DecodePrediction(1024, g, f, 1.0, 10.0, Bracket(1024, 1024, 0))
@@ -26,13 +27,21 @@ class Repo:
         self.calls.append('quality')
         return self.qualities
 
+    def decode_lookup(self, length):
+        self.calls.append('lookup')
+        if self.lookup is not None:
+            return self.lookup
+        lookup = object.__new__(DecodeLookup)
+        for name, value in (('length', length), ('predictions', self.rows),
+                            ('target_s', self.target), ('bracket', Bracket(1024, 1024, 0))):
+            object.__setattr__(lookup, name, value)
+        return lookup
+
     def decode(self, length):
-        self.calls.append('decode')
-        return self.rows
+        pytest.fail('DC used the separate prediction API')
 
     def decode_target(self, length):
-        self.calls.append('target')
-        return self.target
+        pytest.fail('DC used the separate target API')
 
     def cell(self, group, frequency=408, **changes):
         self.rows = tuple(replace(row, **changes) if (row.group, row.frequency_mhz) ==
@@ -125,7 +134,7 @@ def test_phase_order_and_detector_failure_cost_included_in_clock():
         repo.calls.append('clock')
         return 1_000_000_100
     result = DecodeController(repo, KneeAdapter(broken), clock=clock).choose(1024, 2, 123, 100)
-    assert repo.calls == ['quality', 'knee', 'decode', 'target', 'clock']
+    assert repo.calls == ['quality', 'knee', 'lookup', 'clock']
     assert result.knee.status == 'error_recovered'
     assert result.elapsed_ns == 1_000_000_000 and result.budget_s == 1.0
 
@@ -255,7 +264,7 @@ def test_canonical_quality_is_used_for_detector_selection_and_trace_without_sour
     assert type(source.score) is int and type(source.bracket.weight) is int
 
 
-@pytest.mark.parametrize('table', ['quality', 'decode'])
+@pytest.mark.parametrize('table', ['quality', 'lookup'])
 @pytest.mark.parametrize('field,value', [('lower', 1024.0), ('upper', 8193), ('weight', False)])
 def test_corrupt_nested_bracket_is_fatal_before_phase_clock(table, field, value):
     repo = Repo()
@@ -265,7 +274,7 @@ def test_corrupt_nested_bracket_is_fatal_before_phase_clock(table, field, value)
     with pytest.raises(ContractError):
         DecodeController(repo, Adapter(events=events), clock=lambda: pytest.fail('invalid bracket')).choose(
             1024, 128, 123, 100)
-    assert repo.calls == (['quality'] if table == 'quality' else ['quality', 'decode'])
+    assert repo.calls == (['quality'] if table == 'quality' else ['quality', 'lookup'])
     assert events == ([] if table == 'quality' else ['knee'])
 
 
@@ -312,3 +321,37 @@ def test_sealed_published_table_manual_choices_with_explicit_no_knee():
         result = controller.choose(length, 128, 123, 100)
         assert pair(result) == expected_pair and result.selection_path == path
         assert len(result.candidates) == 40
+
+
+@pytest.mark.parametrize('field,bad', [
+    ('length', True), ('length', 2048), ('bracket', None),
+    ('bracket', Bracket(2048, 2048, 0)),
+    ('bracket', Bracket(1024, 2048, 0)),
+])
+def test_combined_lookup_metadata_is_validated_before_clock(field, bad):
+    repo = Repo()
+    repo.lookup = repo.decode_lookup(1024)
+    repo.calls.clear()
+    object.__setattr__(repo.lookup, field, bad)
+    with pytest.raises(ContractError):
+        DecodeController(repo, Adapter(), clock=lambda: pytest.fail('invalid lookup reached clock')).choose(
+            1024, 128, 123, 100)
+    assert repo.calls == ['quality', 'lookup']
+
+
+@pytest.mark.parametrize('bad', [object(), None, {}, ()])
+def test_foreign_combined_lookup_wrapper_is_rejected(bad):
+    repo = Repo()
+    repo.decode_lookup = lambda length: bad
+    with pytest.raises(ContractError):
+        DecodeController(repo, Adapter(), clock=lambda: pytest.fail('invalid wrapper reached clock')).choose(
+            1024, 128, 123, 100)
+
+
+@pytest.mark.parametrize('field,bad', [('lower', 1024.0), ('upper', 8193), ('weight', math.nan)])
+def test_corrupted_combined_lookup_bracket_is_revalidated(field, bad):
+    repo = Repo()
+    repo.lookup = repo.decode_lookup(1024)
+    object.__setattr__(repo.lookup.bracket, field, bad)
+    with pytest.raises(ContractError):
+        choose(repo)

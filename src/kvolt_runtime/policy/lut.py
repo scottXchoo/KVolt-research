@@ -9,9 +9,10 @@ from types import MappingProxyType
 from ..config import GROUPS
 from ..errors import ContractError
 from .types import (
-    Bracket, DecodePrediction, FREQUENCIES_MHZ, LUTError, LUTProvenance,
-    PERFORMANCE_LENGTHS, PrefillPrediction, QUALITY_LENGTHS, QualityPrediction,
-    finite, length as validate_length,
+    Bracket, DecodeLookup, DecodePrediction, FREQUENCIES_MHZ, LUTError, LUTProvenance,
+    PERFORMANCE_LENGTHS, PrefillLatencyPrediction, PrefillLookup, PrefillPrediction,
+    QUALITY_LENGTHS, QualityPrediction,
+    finite, frequency, length as validate_length,
 )
 
 SOURCE_COMMIT = 'd6cf87a60984aa167c5b5d72de354fd3d587c2d5'
@@ -74,11 +75,54 @@ class _TabulatedLUT:
         validate_length(length)
 
     def prefill(self, length: int) -> tuple[PrefillPrediction, ...]:
+        return self.prefill_candidates(length, FREQUENCIES_MHZ)
+
+    def prefill_lookup(self, length: int, *, latency_only: bool = False) -> PrefillLookup:
+        """Read predictions and the Reference goal with a single bracket search."""
+        if type(latency_only) is not bool:
+            raise ContractError('Prefill latency_only must be a boolean')
         bracket = _bracket(length, PERFORMANCE_LENGTHS)
-        return tuple(PrefillPrediction(length, f, *self._pair_at(self._prefill, (f,), bracket), bracket) for f in FREQUENCIES_MHZ)
+        target = _at(self._prefill_target[bracket.lower], self._prefill_target[bracket.upper], bracket)
+        predictions = (self._prefill_latencies_at(length, bracket) if latency_only
+                       else self._prefill_candidates_at(length, FREQUENCIES_MHZ, bracket))
+        return PrefillLookup(length, predictions, target, bracket)
+
+    def prefill_latencies(self, length: int) -> tuple[PrefillLatencyPrediction, ...]:
+        bracket = _bracket(length, PERFORMANCE_LENGTHS)
+        return self._prefill_latencies_at(length, bracket)
+
+    def _prefill_latencies_at(self, length, bracket):
+        return tuple(PrefillLatencyPrediction(
+            length, f, _at(self._prefill[(bracket.lower, f)][0],
+                           self._prefill[(bracket.upper, f)][0], bracket), bracket)
+            for f in FREQUENCIES_MHZ)
+
+    def prefill_candidates(self, length: int, frequencies: tuple[int, ...]) -> tuple[PrefillPrediction, ...]:
+        bracket = _bracket(length, PERFORMANCE_LENGTHS)
+        if type(frequencies) is not tuple:
+            raise ContractError('Prefill frequencies must be an immutable tuple')
+        for value in frequencies:
+            frequency(value)
+        if len(set(frequencies)) != len(frequencies):
+            raise ContractError('Prefill frequencies must be unique')
+        return self._prefill_candidates_at(length, tuple(sorted(frequencies)), bracket)
+
+    def _prefill_candidates_at(self, length, frequencies, bracket):
+        return tuple(PrefillPrediction(length, f, *self._pair_at(self._prefill, (f,), bracket), bracket)
+                     for f in frequencies)
+
+    def decode_lookup(self, length: int) -> DecodeLookup:
+        """Read all Decode predictions and the Reference goal at one bracket."""
+        bracket = _bracket(length, PERFORMANCE_LENGTHS)
+        predictions = self._decode_at(length, bracket)
+        target = _at(self._decode_target[bracket.lower], self._decode_target[bracket.upper], bracket)
+        return DecodeLookup(length, predictions, target, bracket)
 
     def decode(self, length: int) -> tuple[DecodePrediction, ...]:
         bracket = _bracket(length, PERFORMANCE_LENGTHS)
+        return self._decode_at(length, bracket)
+
+    def _decode_at(self, length, bracket):
         return tuple(DecodePrediction(length, g, f, *self._pair_at(self._decode, (g, f), bracket), bracket) for g in GROUPS for f in FREQUENCIES_MHZ)
 
     def quality(self, length: int) -> tuple[QualityPrediction, ...]:
