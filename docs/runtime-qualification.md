@@ -35,6 +35,12 @@ and executes the CPU suite and opt-in GPU cache/Prefill correctness tests. It
 records the commands, exit codes, JUnit results, source and input hashes. These
 diagnostic inputs remain excluded from the formal evaluation.
 
+Every M4 session explicitly passes `--no-online-lut`, including development
+diagnostics, signal probes and the performance candidate. Development's ordinary
+Online LUT default must not adapt these frozen qualification inputs. No online
+state or feedback is produced, and the resulting grant does not qualify the
+adaptive policy.
+
 ```sh
 python tools/qualify_m4.py prepare \
   --model-dir SNAPSHOT --lut-dir data/luts/current \
@@ -129,7 +135,7 @@ coverage; no extrapolated qualification is inferred.
 
 ```sh
 kvolt run --mode performance --qualification M4/qualification.json \
-  --warmup formal --collect-power --native-profile agx2 \
+  --warmup formal --collect-power --native-profile agx2 --no-online-lut \
   --model-dir SNAPSHOT --lut-dir data/luts/current \
   --device-profile DEVICE.json --power-profile POWER.json \
   --kivi-root KIVI --manifest EVALUATION_MANIFEST.json --output-dir NEW_SESSION

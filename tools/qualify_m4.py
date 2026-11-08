@@ -365,7 +365,7 @@ def run_session(plan, name, manifest, *, lock, mode='development', qualification
             '--lut-dir', plan['lut_dir'], '--output-dir', str(Path(plan['root'])/name),
             '--device-profile', plan['device_profile'], '--power-profile', plan['power_profile'],
             '--collect-power', '--native-profile', 'agx2', '--kivi-root', plan['kivi_root'],
-            '--warmup', 'none' if signal_number else 'formal', '--mode', mode]
+            '--warmup', 'none' if signal_number else 'formal', '--mode', mode, '--no-online-lut']
     if qualification is not None:
         argv += ['--qualification', str(qualification)]
     parsed = _parser().parse_args(argv)

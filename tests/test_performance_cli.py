@@ -163,12 +163,15 @@ def real_compact_performance(performance, request):
     return performance
 
 
-def test_real_current_and_compact_grant_reaches_real_performance_runner(real_compact_performance, capsys):
+@pytest.mark.parametrize('explicit_frozen', [False, True])
+def test_real_current_and_compact_grant_reaches_real_performance_runner(real_compact_performance, capsys, explicit_frozen):
     from kvolt_runtime.policy.compact import CompactLUTRepository
     from kvolt_runtime.qualification.contracts import _lut_binding
     from kvolt_runtime.qualification.evidence import load_evidence
     from kvolt_runtime.run_cli import main
     fixture = real_compact_performance
+    if explicit_frozen:
+        fixture.args.append('--no-online-lut')
     grant = load_evidence(fixture.report, fixture.binding)
     assert grant.binding['lut']['reference']['manifest_sha256'] == 'd332875ccce626dd99700da8c7a128bf4801577333e76ee40a987f4051311e40'
     assert main(fixture.args, factories=fixture.seam) == 0
@@ -184,7 +187,93 @@ def test_real_current_and_compact_grant_reaches_real_performance_runner(real_com
     assert saved['warmup']['formal_coverage_qualified'] is True
     assert saved['results'][0]['generation']['status'] == 'completed'
     assert saved['results'][0]['energy']['valid'] is True
+    assert saved['provenance']['online_lut']['enabled'] is False
+    assert not list((fixture.report.parent.parent/'out').glob('online-lut*.json'))
     assert not fixture.lock.held
+
+
+@pytest.mark.parametrize('flags', [['--online-lut-state', 'not-opened.json'], ['--online-lut-alpha', '0.1']])
+def test_valid_compact_performance_rejects_explicit_online_options_before_source(
+        real_compact_performance, capsys, flags):
+    from kvolt_runtime.run_cli import main
+    fixture = real_compact_performance
+    assert main([*fixture.args, *flags], factories=fixture.seam) == 2
+    record = stdout_records(capsys)[-1]
+    assert 'omit online state/alpha' in record['errors'][0]['message']
+    assert fixture.events == []
+
+
+def test_valid_compact_grant_does_not_qualify_direct_adaptive_runner(real_compact_performance, capsys):
+    from kvolt_runtime.policy.online import OnlineLUTRepository
+    from kvolt_runtime.run_cli import main
+    fixture = real_compact_performance
+    original = fixture.seam.runner
+    def adaptive_runner(**kwargs):
+        kwargs['repo'] = OnlineLUTRepository(kwargs['repo'],
+            state_path=fixture.report.parent/'not-qualified-state.json', context={'cpu_fixture': True})
+        return original(**kwargs)
+    assert main(fixture.args, factories=replace(fixture.seam, runner=adaptive_runner)) == 2
+    record = stdout_records(capsys)[-1]
+    assert record['errors'][0]['message'] == 'adaptive LUT has no formal performance qualification'
+    assert not any(event in fixture.events for event in ('capture', 'load', 'power_start'))
+    saved = json.loads((fixture.report.parent.parent/'out/session.json').read_text())
+    assert saved['provenance']['formal_evidence_accepted'] is True
+    assert saved['provenance']['formal_performance_qualified'] is False
+
+
+def test_real_compact_development_feedback_and_cross_session_state_reuse(real_compact_performance, capsys):
+    from kvolt_runtime.policy.online import OnlineLUTRepository
+    from kvolt_runtime.run_cli import main
+    fixture = real_compact_performance
+    root = fixture.report.parent.parent
+    manifest = root/'online-manifest.json'
+    manifest.write_text(canonical_json({'schema_version': 'kvolt-request-manifest-v1',
+        'requests': [{'request_id': str(i), 'prompt_file': 'prompt.txt', 'nmax': 3} for i in range(2)]}))
+    args = list(fixture.args)
+    args[args.index('--mode')+1] = 'development'
+    for option in ('--qualification', '--prompt-file', '--max-new-tokens'):
+        index = args.index(option)
+        del args[index:index+2]
+    args += ['--manifest', str(manifest)]
+    assert main(args, factories=fixture.seam) == 0
+    stdout_records(capsys)
+    first = json.loads((root/'out/session.json').read_text())
+    assert isinstance(fixture.observed['runner_kwargs']['repo'], OnlineLUTRepository)
+    assert first['provenance']['online_lut']['enabled'] is True
+    assert [r['online_lut']['used']['revision'] for r in first['results']] == [0, 1]
+    final = json.loads((root/'out/online-lut.final.json').read_text())
+    assert final['revision'] == 2 and final['alpha'] == 0.1
+    baseline = fixture.observed['runner_kwargs']['repo'].base
+    expected = {'prefill': {}, 'decode': {}}
+    for row in first['results']:
+        original = json.loads((root/'out'/row['online_lut']['observation_path']).read_text())
+        assert 'feedback' not in original['online_lut']
+        assert row['online_lut']['feedback']['status'] == 'updated'
+        length = row['request']['length']
+        pc, dc = row['decisions']['prefill']['selected'], row['decisions']['decode']['selected']
+        p = next(p for p in baseline.prefill(length) if p.frequency_mhz == pc['frequency_mhz'])
+        d = next(p for p in baseline.decode(length) if (p.group, p.frequency_mhz) == (dc['group'], dc['frequency_mhz']))
+        observations = [
+            ('prefill', f"{length}:{p.frequency_mhz}", 'ttft_s', p.ttft_s, row['timing']['ttft_s']),
+            ('prefill', f"{length}:{p.frequency_mhz}", 'prefill_energy_j', p.energy_j, row['energy']['prefill_energy_j']),
+            ('decode', f"{length}:{d.group}:{d.frequency_mhz}", 'tpot_s', d.tpot_s, row['timing']['mean_tpot_s']),
+            ('decode', f"{length}:{d.group}:{d.frequency_mhz}", 'energy_j_per_token', d.energy_j_per_token, row['energy']['decode_j_per_token'])]
+        for phase, key, metric, initial, actual in observations:
+            cell = expected[phase].setdefault(key, {})
+            previous = cell.get(metric)
+            cell[metric] = {'ema': 0.9*(previous['ema'] if previous else initial)+0.1*actual,
+                            'count': previous['count']+1 if previous else 1}
+            if phase == 'decode':
+                cell[metric].update(last_n=3, min_n=3, max_n=3)
+    assert final['cells'] == expected
+    args[args.index('--output-dir')+1] = str(root/'second-online')
+    args += ['--online-lut-state', str(root/'out/online-lut.json')]
+    assert main(args, factories=fixture.seam) == 0
+    stdout_records(capsys)
+    second = json.loads((root/'second-online/session.json').read_text())
+    assert [r['online_lut']['used']['revision'] for r in second['results']] == [2, 3]
+    assert json.loads((root/'second-online/online-lut.final.json').read_text())['revision'] == 4
+    assert json.loads((root/'out/online-lut.final.json').read_text())['revision'] == 2
 
 
 @pytest.mark.parametrize('change', ['reference3', 'reference5', 'reference_sha', 'runtime_manifest',

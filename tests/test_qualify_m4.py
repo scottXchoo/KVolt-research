@@ -12,6 +12,7 @@ import pytest
 
 from kvolt_runtime.qualification.contracts import REQUIRED_CHECKS, file_sha256
 from kvolt_runtime.qualification.evidence import load_evidence
+from test_performance_cli import performance
 
 
 @pytest.fixture
@@ -417,6 +418,7 @@ def test_signal_injection_preserves_terminal_boundaries_and_targets_real_active_
             assert all(row['timing']['valid'] is True for row in session['results'][:target])
             if boundary in ('first_eos', 'decode_eos'):
                 assert session['results'][0]['generation']['stop_reason'] == 'eos'
+        assert '--no-online-lut' in driver.read_json(tmp_path/'out.stdout.json')['argv']
     finally:
         signal.signal(signal_number, previous_handler)
 
@@ -601,3 +603,38 @@ def test_prepare_cpu_fixture_cli_is_optional_and_never_replaces_runtime(driver, 
     assert driver.main(argv) == 0
     assert seen[0].lut_dir == Path('/lut-dir')
     assert seen[0].cpu_lut_dir == (Path('/sealed-cpu') if cpu_option else None)
+
+
+@pytest.mark.parametrize('mode', ['development', 'performance'])
+def test_m4_real_cli_and_runner_use_frozen_current_lut(driver, performance, monkeypatch, mode):
+    """M4 development must stay frozen despite the ordinary online default."""
+    from dataclasses import replace
+    import kvolt_runtime.run_cli as cli
+    from kvolt_runtime.policy.compact import load_lut_repository
+    from kvolt_runtime.policy.online import OnlineLUTRepository
+    from kvolt_runtime.qualification.contracts import qualification_binding
+    from test_performance_cli import write_report
+    fixture = performance
+    root = fixture.report.parent.parent
+    manifest = root/'manifest.json'
+    driver.write(manifest, {'schema_version': 'kvolt-request-manifest-v1',
+        'requests': [{'request_id': 'frozen-m4', 'prompt_file': 'prompt.txt', 'nmax': 4}]})
+    repository = load_lut_repository(current_lut_dir())
+    binding = qualification_binding(repo=repository, device_profile=fixture.device_profile,
+        power_profile=fixture.power_profile, native_profile='agx2', runtime=fixture.runtime)
+    report = write_report(root/'current-evidence', binding, {'1024': 4})
+    seam = replace(fixture.seam, repository=cli._repository)
+    monkeypatch.setattr(cli, 'RunFactories', lambda: seam)
+    monkeypatch.setitem(sys.modules, 'torch', SimpleNamespace(cuda=SimpleNamespace(empty_cache=lambda: None)))
+    plan = {'root': str(root), 'manifest': str(manifest), 'model_dir': str(root/'model'),
+            'lut_dir': str(current_lut_dir()), 'device_profile': str(root/'device.json'),
+            'power_profile': str(root/'power.json'), 'kivi_root': str(root/'kivi')}
+    with fixture.lock:
+        session = driver.run_session(plan, 'm4-'+mode, manifest, lock=fixture.lock, mode=mode,
+                                     qualification=report if mode == 'performance' else None)
+    assert session['status'] == 'completed'
+    assert session['provenance']['online_lut'] == {
+        'enabled': False, 'policy': 'frozen', 'disabled_reason': 'explicit_no_online_lut'}
+    assert not isinstance(fixture.observed['runner_kwargs']['repo'], OnlineLUTRepository)
+    assert not list((root/('m4-'+mode)).glob('online-lut*.json'))
+    assert '--no-online-lut' in driver.read_json(root/('m4-'+mode+'.stdout.json'))['argv']
