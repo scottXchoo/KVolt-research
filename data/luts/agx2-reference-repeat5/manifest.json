@@ -1,0 +1,135 @@
+{
+  "schema": "kvolt.reference-lut.v1",
+  "context": {
+    "device_id": "A2",
+    "model_id": "meta-llama/Llama-3.1-8B-Instruct",
+    "model_revision": "0e9e39f249a16976918f6564b8830bc894c89659",
+    "weight_dtype": "float16",
+    "kv_precision": "FP16",
+    "generation": {
+      "force_length": false,
+      "max_new_tokens": 512
+    },
+    "cpu_khz": 2201600,
+    "emc_hz": 3199000000,
+    "gpu_policy": "default_governor_cap1122",
+    "gpu_governor": "nvhost_podgov",
+    "gpu_min_hz": 306000000,
+    "gpu_max_hz": 1122000000,
+    "technical_repeats_per_length": 5,
+    "total_requests": 40,
+    "documents_per_length": 1,
+    "aggregation": "independent_maximum_TTFT_and_request_mean_TPOT_per_length",
+    "prefill_boundary": "t0..t1",
+    "decode_TPOT": "(tN-t1)/(N-1); only N>1"
+  },
+  "interpolation": {
+    "axis": "length",
+    "method": "piecewise_linear",
+    "extrapolation": false
+  },
+  "units": {
+    "length": "tokens",
+    "r_p_ttft_s": "s",
+    "r_d_tpot_s": "s/token"
+  },
+  "policy_multipliers": {
+    "prefill": 1.0,
+    "decode": 1.0
+  },
+  "table": {
+    "file": "reference.json",
+    "columns": [
+      "length",
+      "r_p_ttft_s",
+      "r_d_tpot_s"
+    ],
+    "rows": 8,
+    "lengths": [
+      1024,
+      2048,
+      3072,
+      4096,
+      5120,
+      6144,
+      7168,
+      8192
+    ],
+    "bytes": 310,
+    "sha256": "0892b309e9124553f0b5a1410241060648b68f5be7c9c02db7e1d3b0fd640151"
+  },
+  "created_utc": "2026-11-08T06:52:22.925687+00:00",
+  "evidence_files": {
+    "source-validation.json": {
+      "bytes": 19235,
+      "sha256": "a51bcff64f8e291d4121b0578c23ef211bad5c3e772f396ca31098d55400aa93"
+    }
+  },
+  "sources": {
+    "baseline_reference_curves": {
+      "path": "/home/agx3/Documents/Codex/2026-10-30/notion-plugin-notion-openai-curated-remote/outputs/20261101-fp16-dvfs-reference-a2/analysis/fp16-reference-curves.json",
+      "bytes": 9785,
+      "sha256": "662c326e5ff62db4d7bd34b8931c2401dcf09293114e322eb20a3fb5c5a373a0"
+    },
+    "canonical_validation": {
+      "path": "source-validation.json",
+      "bytes": 19235,
+      "sha256": "a51bcff64f8e291d4121b0578c23ef211bad5c3e772f396ca31098d55400aa93"
+    },
+    "baseline_completion": {
+      "path": "/mnt/kvolt-data/kvolt/artifacts/fp16-reference/fp16-a2-dvfs-single-20261101-r1/completion.json",
+      "bytes": 2865,
+      "sha256": "c3ec120eedf57dabe51859c3ad9192cc1f816f8400f204ae7728f729ff719a46"
+    },
+    "baseline_manifest": {
+      "path": "/mnt/kvolt-data/kvolt/artifacts/fp16-reference/fp16-a2-dvfs-single-20261101-r1/manifest.json",
+      "bytes": 108343,
+      "sha256": "1079728db09e73f86b3abd2a4a0a5bc7323a7c28df3a745eda2b6ffc757e9347"
+    },
+    "baseline_restoration": {
+      "path": "/mnt/kvolt-data/kvolt/artifacts/fp16-reference/fp16-a2-dvfs-single-20261101-r1/restoration.json",
+      "bytes": 5942,
+      "sha256": "22b9c676ab5afccd7b66a0a844d1b2a6d956c0202203e0ddfc33278494c8e175"
+    },
+    "baseline_spec": {
+      "path": "/mnt/kvolt-data/kvolt/artifacts/fp16-reference/fp16-a2-dvfs-single-20261101-r1/spec.json",
+      "bytes": 11858,
+      "sha256": "e5dd5664ef83882ea72faf62160cdaf882a5383bce8dd099c299296ef19af399"
+    },
+    "supplement_completion": {
+      "path": "/mnt/kvolt-data/kvolt/artifacts/fp16-reference/fp16-a2-dvfs-repeat5-supplement-20261108-r1/completion.json",
+      "bytes": 1993,
+      "sha256": "2dedc93cdf6e845dd39be0fdbe612de2ee6e970d649a787530a5052468e01a1d"
+    },
+    "supplement_manifest": {
+      "path": "/mnt/kvolt-data/kvolt/artifacts/fp16-reference/fp16-a2-dvfs-repeat5-supplement-20261108-r1/manifest.json",
+      "bytes": 108451,
+      "sha256": "0b999558c049320f445b18152a9bc0a5aa7efdf74732d40914214d798cee8faf"
+    },
+    "supplement_restoration": {
+      "path": "/mnt/kvolt-data/kvolt/artifacts/fp16-reference/fp16-a2-dvfs-repeat5-supplement-20261108-r1/restoration.json",
+      "bytes": 5942,
+      "sha256": "79d5bd249ccc3ae5e43a457bff8a1030b68db745f69e7533654b25f81ab6aedf"
+    },
+    "supplement_spec": {
+      "path": "/mnt/kvolt-data/kvolt/artifacts/fp16-reference/fp16-a2-dvfs-repeat5-supplement-20261108-r1/spec.json",
+      "bytes": 12518,
+      "sha256": "638da431a62570778e98f05eb3f43c2bf151fe4c31a8b7e6fb18e05181b45dc3"
+    }
+  },
+  "validation": {
+    "canonical_requests_verified": 40,
+    "raw_maxima_and_slo_values_preserved": true,
+    "canonical_hashes_checked": true,
+    "timestamp_metrics_checked": true,
+    "request_cpu_gpu_controls_checked": true,
+    "controller_integration_validated": false
+  },
+  "provenance": {
+    "manifest_origin": "locally generated KVolt integration envelope; not a user-provided original manifest",
+    "provided_input_path": "reference.json",
+    "provided_file_sha256": "0892b309e9124553f0b5a1410241060648b68f5be7c9c02db7e1d3b0fd640151",
+    "original_array_bytes_preserved": true,
+    "canonical_validation_scope": "AGX2 baseline24 and supplement16 canonical result hashes, valid N>1 timing and fixed CPU/default GPU controls read-only; no prompts or output IDs exported"
+  }
+}

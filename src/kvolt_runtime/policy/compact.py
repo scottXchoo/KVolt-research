@@ -9,7 +9,7 @@ from .lut import (
     _TabulatedLUT, _insert, _json, _read,
 )
 from .reference import (
-    COMPACT_REFERENCE_MANIFEST_SHA256, CompactReferenceRepository, load_reference_repository,
+    COMPACT_REFERENCE_MANIFEST_SHA256S, CompactReferenceRepository, load_reference_repository,
 )
 from .types import FREQUENCIES_MHZ, LUTError, LUTProvenance, PERFORMANCE_LENGTHS, QUALITY_LENGTHS
 
@@ -136,13 +136,13 @@ class CompactLUTRepository(_TabulatedLUT):
 
     def __init__(self, compact_path, *, reference_repository):
         reference_pins = {
-            MeasuredLUTRepository: REFERENCE_MANIFEST_SHA256,
-            CompactReferenceRepository: COMPACT_REFERENCE_MANIFEST_SHA256,
+            MeasuredLUTRepository: {REFERENCE_MANIFEST_SHA256},
+            CompactReferenceRepository: COMPACT_REFERENCE_MANIFEST_SHA256S,
         }
         expected_reference_pin = reference_pins.get(type(reference_repository))
         if (expected_reference_pin is None
                 or reference_repository.provenance.kind != 'measured'
-                or reference_repository.provenance.manifest_sha256 != expected_reference_pin
+                or reference_repository.provenance.manifest_sha256 not in expected_reference_pin
                 or reference_repository.provenance.source_device.casefold() != 'agx2'):
             raise LUTError('compact LUT requires a sealed AGX2 MeasuredLUTRepository or pinned '
                            'CompactReferenceRepository as explicit reference_repository')

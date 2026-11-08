@@ -1,0 +1,652 @@
+{
+  "records": [
+    {
+      "controls_verified": true,
+      "id": "FP16DVFSA2-001",
+      "length": 3072,
+      "n": 512,
+      "repeat": 1,
+      "result_sha256": "7176f11096f3caf8f966b8ed350d7badeb97adc65a50d09d7e6b307603a23bfd",
+      "t0_ns": 345414840254830,
+      "t1_ns": 345417796759442,
+      "tN_ns": 345475379401952,
+      "tpot_actual_s": 0.11268618886497064,
+      "ttft_s": 2.956504612
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFSA2-002",
+      "length": 6144,
+      "n": 512,
+      "repeat": 1,
+      "result_sha256": "c4a493345210fecf64fa712aafaee78268960d71308a007186a987fce35982ed",
+      "t0_ns": 345572128328480,
+      "t1_ns": 345576681550728,
+      "tN_ns": 345641498428389,
+      "tpot_actual_s": 0.12684320481604697,
+      "ttft_s": 4.553222248
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFSA2-003",
+      "length": 4096,
+      "n": 512,
+      "repeat": 1,
+      "result_sha256": "0c7d3d3191480031dce86e87891508c897b03ba6856debde58ec5721b1ce566b",
+      "t0_ns": 345732930312098,
+      "t1_ns": 345736816949642,
+      "tN_ns": 345796808720968,
+      "tpot_actual_s": 0.11740072666536203,
+      "ttft_s": 3.886637544
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFSA2-004",
+      "length": 2048,
+      "n": 512,
+      "repeat": 1,
+      "result_sha256": "b46bf772a7174bc5a7eba0970371139b3a50175174d8d3c4fed3f1ce5c444a31",
+      "t0_ns": 345880756322537,
+      "t1_ns": 345882680668511,
+      "tN_ns": 345937853216583,
+      "tpot_actual_s": 0.10796976139334638,
+      "ttft_s": 1.924345974
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFSA2-005",
+      "length": 1024,
+      "n": 448,
+      "repeat": 1,
+      "result_sha256": "9fba37b1324a7953c00c7299370047194c68e435ee546599a3a24b5c849311e0",
+      "t0_ns": 346010925973125,
+      "t1_ns": 346011723300827,
+      "tN_ns": 346057825285245,
+      "tpot_actual_s": 0.10313643046532439,
+      "ttft_s": 0.797327702
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFSA2-006",
+      "length": 8192,
+      "n": 512,
+      "repeat": 1,
+      "result_sha256": "25f44014edbb676c3bf1162600d46b82c6f678e552e4905d6a1035f4c1f7b072",
+      "t0_ns": 346161017562232,
+      "t1_ns": 346167275971723,
+      "tN_ns": 346237033837571,
+      "tpot_actual_s": 0.13651245762818004,
+      "ttft_s": 6.258409491
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFSA2-007",
+      "length": 5120,
+      "n": 512,
+      "repeat": 1,
+      "result_sha256": "997afe8dc8e1e4844c0b467008a1a6ecf6acf4fb6e5f9bb2aaae4d1216246ada",
+      "t0_ns": 346331152322484,
+      "t1_ns": 346334895060632,
+      "tN_ns": 346397316608405,
+      "tpot_actual_s": 0.12215567078864971,
+      "ttft_s": 3.742738148
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFSA2-008",
+      "length": 7168,
+      "n": 512,
+      "repeat": 1,
+      "result_sha256": "1cf1cc30bcbde3cd527e4375490f99cf49baca6d137514adae29170744a5a457",
+      "t0_ns": 346497860482555,
+      "t1_ns": 346503257371215,
+      "tN_ns": 346570476479922,
+      "tpot_actual_s": 0.13154424404500978,
+      "ttft_s": 5.39688866
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFSA2-009",
+      "length": 6144,
+      "n": 512,
+      "repeat": 2,
+      "result_sha256": "efe784b9b4f153c9cdcffe70714b1c9df511d18459e2bf2ff65cf0b44b134d38",
+      "t0_ns": 346584576316527,
+      "t1_ns": 346589146352766,
+      "tN_ns": 346654047713446,
+      "tpot_actual_s": 0.12700853362035225,
+      "ttft_s": 4.570036239
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFSA2-010",
+      "length": 8192,
+      "n": 512,
+      "repeat": 2,
+      "result_sha256": "ca13830612d3dafafb1503436cda19f163af3ab93dc80392599b3f699ad6e1fa",
+      "t0_ns": 346667996369493,
+      "t1_ns": 346674309678926,
+      "tN_ns": 346744056679476,
+      "tpot_actual_s": 0.13649119481409,
+      "ttft_s": 6.313309433
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFSA2-011",
+      "length": 2048,
+      "n": 512,
+      "repeat": 2,
+      "result_sha256": "d3c368e3025b9c452b6f0253a3f924ee6438015f7913b747a27d17d8c0620b96",
+      "t0_ns": 346758296322065,
+      "t1_ns": 346760271260879,
+      "tN_ns": 346815452622128,
+      "tpot_actual_s": 0.1079870083150685,
+      "ttft_s": 1.974938814
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFSA2-012",
+      "length": 1024,
+      "n": 448,
+      "repeat": 2,
+      "result_sha256": "700c8666b6976bfe5fc3a0bd181fc26c3d800082219dceb7f5681c4265c1d59b",
+      "t0_ns": 346828853073536,
+      "t1_ns": 346829605177460,
+      "tN_ns": 346875740709834,
+      "tpot_actual_s": 0.10321148182102909,
+      "ttft_s": 0.752103924
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFSA2-013",
+      "length": 3072,
+      "n": 512,
+      "repeat": 2,
+      "result_sha256": "59cb606da350633034c1067f29bba60db1da8e7bff220cb8e0173c5036cb2680",
+      "t0_ns": 346888664314209,
+      "t1_ns": 346891567599321,
+      "tN_ns": 346949138554924,
+      "tpot_actual_s": 0.11266331820547945,
+      "ttft_s": 2.903285112
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFSA2-014",
+      "length": 7168,
+      "n": 512,
+      "repeat": 2,
+      "result_sha256": "3ad22b23b569cce86dcf6715b49686ff2a15b5908467869df66be1d4c9a038ee",
+      "t0_ns": 346962660311301,
+      "t1_ns": 346968060576416,
+      "tN_ns": 347035355446439,
+      "tpot_actual_s": 0.1316925049373777,
+      "ttft_s": 5.400265115
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFSA2-015",
+      "length": 4096,
+      "n": 512,
+      "repeat": 2,
+      "result_sha256": "6d0780cc3ef5b03b9f491980d6a786ae58c81f62ddd9131d2624041fe271b878",
+      "t0_ns": 347049452310081,
+      "t1_ns": 347053343128444,
+      "tN_ns": 347113305119433,
+      "tpot_actual_s": 0.11734244811937378,
+      "ttft_s": 3.890818363
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFSA2-016",
+      "length": 5120,
+      "n": 512,
+      "repeat": 2,
+      "result_sha256": "ea825bf46d0e13e12dbcd9fe48414c8a398ff6ac825884e267d7bb0d7dd772a6",
+      "t0_ns": 347126947686490,
+      "t1_ns": 347130688564833,
+      "tN_ns": 347193123017321,
+      "tpot_actual_s": 0.12218092463405088,
+      "ttft_s": 3.740878343
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFSA2-017",
+      "length": 7168,
+      "n": 512,
+      "repeat": 3,
+      "result_sha256": "0e1f4efbe5c56a93bf0f02fdf0e9fd2285ef6718846c5dc2862cd55b7f7157eb",
+      "t0_ns": 347206860312149,
+      "t1_ns": 347212262302380,
+      "tN_ns": 347279554278499,
+      "tpot_actual_s": 0.13168684172015654,
+      "ttft_s": 5.401990231
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFSA2-018",
+      "length": 6144,
+      "n": 512,
+      "repeat": 3,
+      "result_sha256": "121b9b1a8b5525d8332c54869f25d78029117e3229d9a90e435f3b531d1cc18f",
+      "t0_ns": 347293640315942,
+      "t1_ns": 347298264813625,
+      "tN_ns": 347363126343745,
+      "tpot_actual_s": 0.12693058731898238,
+      "ttft_s": 4.624497683
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFSA2-019",
+      "length": 3072,
+      "n": 512,
+      "repeat": 3,
+      "result_sha256": "d7c6a5970807de1e84360dbe146b1ff5785af09201aa7467f83bda13fe8a73d5",
+      "t0_ns": 347377084341675,
+      "t1_ns": 347379980545280,
+      "tN_ns": 347437454136270,
+      "tpot_actual_s": 0.11247278080234833,
+      "ttft_s": 2.896203605
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFSA2-020",
+      "length": 8192,
+      "n": 512,
+      "repeat": 3,
+      "result_sha256": "8a18e1cc854d7cc884412bb5e62fa9441d80344720dc762d772e3c0662355057",
+      "t0_ns": 347450960312523,
+      "t1_ns": 347457221276719,
+      "tN_ns": 347526906651217,
+      "tpot_actual_s": 0.13637059588649708,
+      "ttft_s": 6.260964196
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFSA2-021",
+      "length": 5120,
+      "n": 512,
+      "repeat": 3,
+      "result_sha256": "c08340c38f25127347f653ed8d801df7c2554a4bbfbf3f1adac705c04aa69f7d",
+      "t0_ns": 347541182585258,
+      "t1_ns": 347544931509566,
+      "tN_ns": 347607339422634,
+      "tpot_actual_s": 0.12212898839138943,
+      "ttft_s": 3.748924308
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFSA2-022",
+      "length": 1024,
+      "n": 448,
+      "repeat": 3,
+      "result_sha256": "a80fcf44e2771cf6fed7aab79e9f71a0f8d037a191770d40ab07b94fe65855a1",
+      "t0_ns": 347621132308997,
+      "t1_ns": 347621937990927,
+      "tN_ns": 347668030733404,
+      "tpot_actual_s": 0.10311575498210292,
+      "ttft_s": 0.80568193
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFSA2-023",
+      "length": 4096,
+      "n": 512,
+      "repeat": 3,
+      "result_sha256": "5db92d60ef1d325d336dc180b50a15e2e74a9174dc64341e4ee4cec795790d3c",
+      "t0_ns": 347680913620534,
+      "t1_ns": 347684808418899,
+      "tN_ns": 347744819714290,
+      "tpot_actual_s": 0.11743893422896282,
+      "ttft_s": 3.894798365
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFSA2-024",
+      "length": 2048,
+      "n": 512,
+      "repeat": 3,
+      "result_sha256": "d840778cfc75f9e9c994117643757c707461ee7bb7cd16e3d94a18acb55e4a75",
+      "t0_ns": 347758509694927,
+      "t1_ns": 347760433198696,
+      "tN_ns": 347815554125831,
+      "tpot_actual_s": 0.10786874194716244,
+      "ttft_s": 1.923503769
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFS5A2-001",
+      "length": 7168,
+      "n": 512,
+      "repeat": 4,
+      "result_sha256": "7c9dee7e447aacddf06f9cca746bb00053ead844e8f6ed013f69b5d0ecdaa462",
+      "t0_ns": 945944960288606,
+      "t1_ns": 945950344335957,
+      "tN_ns": 946017757470299,
+      "tpot_actual_s": 0.13192394196086107,
+      "ttft_s": 5.384047351
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFS5A2-002",
+      "length": 2048,
+      "n": 512,
+      "repeat": 4,
+      "result_sha256": "8ae4296692b4073f7499a9bb4fdd80c96d653dc633b16a26e223713e8638ac44",
+      "t0_ns": 946102320333944,
+      "t1_ns": 946104296743462,
+      "tN_ns": 946159515450697,
+      "tpot_actual_s": 0.1080600924363992,
+      "ttft_s": 1.976409518
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFS5A2-003",
+      "length": 3072,
+      "n": 512,
+      "repeat": 4,
+      "result_sha256": "6fa22b022e54202679d593b47feb265a4da51f9f1fc1f00f07f7c327e19835ff",
+      "t0_ns": 946246905104062,
+      "t1_ns": 946249867913620,
+      "tN_ns": 946307448144259,
+      "tpot_actual_s": 0.11268146896086105,
+      "ttft_s": 2.962809558
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFS5A2-004",
+      "length": 8192,
+      "n": 512,
+      "repeat": 4,
+      "result_sha256": "5776e870e8b6cdd0cffcb20f756850ac9469021958d8bb92d34f3e8bcbeaa57a",
+      "t0_ns": 946411262424599,
+      "t1_ns": 946417566845563,
+      "tN_ns": 946487413652292,
+      "tpot_actual_s": 0.1366865102328767,
+      "ttft_s": 6.304420964
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFS5A2-005",
+      "length": 5120,
+      "n": 512,
+      "repeat": 4,
+      "result_sha256": "490020d5277c1a7860d20cb05ac2c91eae078a28e82e781f87ca468c24dc12ca",
+      "t0_ns": 946581686076471,
+      "t1_ns": 946585482155946,
+      "tN_ns": 946647966017079,
+      "tpot_actual_s": 0.12227761474168297,
+      "ttft_s": 3.796079475
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFS5A2-006",
+      "length": 4096,
+      "n": 512,
+      "repeat": 4,
+      "result_sha256": "dedc6d05b1766af44cef9e90eb50a0dbbf0a6bd13916eedf14f20eae82de59bd",
+      "t0_ns": 946739172318360,
+      "t1_ns": 946743116697717,
+      "tN_ns": 946803060913469,
+      "tpot_actual_s": 0.11730766291976516,
+      "ttft_s": 3.944379357
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFS5A2-007",
+      "length": 1024,
+      "n": 448,
+      "repeat": 4,
+      "result_sha256": "bc63f89fbcef679b0d913cfec7fd24377769a31db98010a30e2b2a69f1062f98",
+      "t0_ns": 946876412305526,
+      "t1_ns": 946877174575639,
+      "tN_ns": 946923231022683,
+      "tpot_actual_s": 0.10303455714541387,
+      "ttft_s": 0.762270113
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFS5A2-008",
+      "length": 6144,
+      "n": 512,
+      "repeat": 4,
+      "result_sha256": "120a3056bac547ead09ab75f1b274170449fd4ffcded3041eaf60ccfec3e87d7",
+      "t0_ns": 947019493383719,
+      "t1_ns": 947024107027841,
+      "tN_ns": 947088993756561,
+      "tpot_actual_s": 0.1269798996477495,
+      "ttft_s": 4.613644122
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFS5A2-009",
+      "length": 7168,
+      "n": 512,
+      "repeat": 5,
+      "result_sha256": "7a30abf60f4b6e5d10f08a8ddc3a577801a7b1614f15cc89b5cb9aa2e79ad796",
+      "t0_ns": 947102957695398,
+      "t1_ns": 947108345806564,
+      "tN_ns": 947175669588775,
+      "tpot_actual_s": 0.13174908456164383,
+      "ttft_s": 5.388111166
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFS5A2-010",
+      "length": 1024,
+      "n": 448,
+      "repeat": 5,
+      "result_sha256": "e6cde397b3a32e8be5bd8eb02ce01341660ab38de26b1240cf40e532001280b5",
+      "t0_ns": 947189712493880,
+      "t1_ns": 947190471110184,
+      "tN_ns": 947236613887154,
+      "tpot_actual_s": 0.10322768897091722,
+      "ttft_s": 0.758616304
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFS5A2-011",
+      "length": 4096,
+      "n": 512,
+      "repeat": 5,
+      "result_sha256": "fe1d14c882d33b9a0b05adc73d7f3f0afe6afa1f01171b32a8eedfd936353ec4",
+      "t0_ns": 947249566924830,
+      "t1_ns": 947253454257889,
+      "tN_ns": 947313424978295,
+      "tpot_actual_s": 0.11735953112720156,
+      "ttft_s": 3.887333059
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFS5A2-012",
+      "length": 3072,
+      "n": 512,
+      "repeat": 5,
+      "result_sha256": "a44a4567e8199c857579d62f4c4a25ebe5ad0d851fa9aedac986b473fb4bebfa",
+      "t0_ns": 947327140301407,
+      "t1_ns": 947330045941440,
+      "tN_ns": 947387521378730,
+      "tpot_actual_s": 0.11247639391389433,
+      "ttft_s": 2.905640033
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFS5A2-013",
+      "length": 8192,
+      "n": 512,
+      "repeat": 5,
+      "result_sha256": "65500df7b7132f31d525154a9dfb2a72294a65a823fbb5f58d06efdc25959478",
+      "t0_ns": 947401060635594,
+      "t1_ns": 947407297292328,
+      "tN_ns": 947477098743412,
+      "tpot_actual_s": 0.13659775163209395,
+      "ttft_s": 6.236656734
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFS5A2-014",
+      "length": 5120,
+      "n": 512,
+      "repeat": 5,
+      "result_sha256": "68481d37a16c4fec0f9f87bbc571021ecc15b11f1c7a149ba96d84cc2c55dcea",
+      "t0_ns": 947491360330147,
+      "t1_ns": 947495104301552,
+      "tN_ns": 947557555458044,
+      "tpot_actual_s": 0.12221361348727985,
+      "ttft_s": 3.743971405
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFS5A2-015",
+      "length": 2048,
+      "n": 512,
+      "repeat": 5,
+      "result_sha256": "e00729ecbac62c5c8a454e8c47d63afb7336c0752d7f00d854a8179e19d4bfdf",
+      "t0_ns": 947571358157656,
+      "t1_ns": 947573280193270,
+      "tN_ns": 947628413972510,
+      "tpot_actual_s": 0.10789389283757339,
+      "ttft_s": 1.922035614
+    },
+    {
+      "controls_verified": true,
+      "id": "FP16DVFS5A2-016",
+      "length": 6144,
+      "n": 512,
+      "repeat": 5,
+      "result_sha256": "f68e919bd35aefe38b760618e69fee852b35cf04a5ab8f66c65830230c9f89e1",
+      "t0_ns": 947641764313729,
+      "t1_ns": 947646372958533,
+      "tN_ns": 947711284339985,
+      "tpot_actual_s": 0.12702814374168298,
+      "ttft_s": 4.608644804
+    }
+  ],
+  "scope": "40 canonical result hashes, request timing and fixed CPU/default GPU controls verified read-only on AGX2; no prompts or output token IDs exported",
+  "source_runs": [
+    {
+      "canonical_count": 24,
+      "conditions": {
+        "cpu_khz": 2201600,
+        "device_id": "A2",
+        "emc_hz": 3199000000,
+        "generation": {
+          "force_length": false,
+          "max_new_tokens": 512
+        },
+        "gpu_governor": "nvhost_podgov",
+        "gpu_max_hz": 1122000000,
+        "gpu_min_hz": 306000000,
+        "kv_precision": "fp16",
+        "model_id": "meta-llama/Llama-3.1-8B-Instruct",
+        "model_revision": "0e9e39f249a16976918f6564b8830bc894c89659",
+        "weight_dtype": "float16"
+      },
+      "files": {
+        "completion.json": {
+          "bytes": 2865,
+          "sha256": "c3ec120eedf57dabe51859c3ad9192cc1f816f8400f204ae7728f729ff719a46"
+        },
+        "manifest.json": {
+          "bytes": 108343,
+          "sha256": "1079728db09e73f86b3abd2a4a0a5bc7323a7c28df3a745eda2b6ffc757e9347"
+        },
+        "restoration.json": {
+          "bytes": 5942,
+          "sha256": "22b9c676ab5afccd7b66a0a844d1b2a6d956c0202203e0ddfc33278494c8e175"
+        },
+        "spec.json": {
+          "bytes": 11858,
+          "sha256": "e5dd5664ef83882ea72faf62160cdaf882a5383bce8dd099c299296ef19af399"
+        }
+      },
+      "path": "/mnt/kvolt-data/kvolt/artifacts/fp16-reference/fp16-a2-dvfs-single-20261101-r1",
+      "request_count": 24,
+      "restoration_ok": true,
+      "status": "complete"
+    },
+    {
+      "canonical_count": 16,
+      "conditions": {
+        "cpu_khz": 2201600,
+        "device_id": "A2",
+        "emc_hz": 3199000000,
+        "generation": {
+          "force_length": false,
+          "max_new_tokens": 512
+        },
+        "gpu_governor": "nvhost_podgov",
+        "gpu_max_hz": 1122000000,
+        "gpu_min_hz": 306000000,
+        "kv_precision": "fp16",
+        "model_id": "meta-llama/Llama-3.1-8B-Instruct",
+        "model_revision": "0e9e39f249a16976918f6564b8830bc894c89659",
+        "weight_dtype": "float16"
+      },
+      "files": {
+        "completion.json": {
+          "bytes": 1993,
+          "sha256": "2dedc93cdf6e845dd39be0fdbe612de2ee6e970d649a787530a5052468e01a1d"
+        },
+        "manifest.json": {
+          "bytes": 108451,
+          "sha256": "0b999558c049320f445b18152a9bc0a5aa7efdf74732d40914214d798cee8faf"
+        },
+        "restoration.json": {
+          "bytes": 5942,
+          "sha256": "79d5bd249ccc3ae5e43a457bff8a1030b68db745f69e7533654b25f81ab6aedf"
+        },
+        "spec.json": {
+          "bytes": 12518,
+          "sha256": "638da431a62570778e98f05eb3f43c2bf151fe4c31a8b7e6fb18e05181b45dc3"
+        }
+      },
+      "path": "/mnt/kvolt-data/kvolt/artifacts/fp16-reference/fp16-a2-dvfs-repeat5-supplement-20261108-r1",
+      "request_count": 16,
+      "restoration_ok": true,
+      "status": "complete"
+    }
+  ],
+  "status": "passed",
+  "targets": [
+    [
+      1024,
+      0.80568193,
+      0.10322768897091722
+    ],
+    [
+      2048,
+      1.976409518,
+      0.1080600924363992
+    ],
+    [
+      3072,
+      2.962809558,
+      0.11268618886497064
+    ],
+    [
+      4096,
+      3.944379357,
+      0.11743893422896282
+    ],
+    [
+      5120,
+      3.796079475,
+      0.12227761474168297
+    ],
+    [
+      6144,
+      4.624497683,
+      0.12702814374168298
+    ],
+    [
+      7168,
+      5.401990231,
+      0.13192394196086107
+    ],
+    [
+      8192,
+      6.313309433,
+      0.1366865102328767
+    ]
+  ]
+}

@@ -33,31 +33,47 @@ controller work and initial K2V2 packing once. Original validation flags
 `performance_runtime_accuracy_or_SLO_validated=false` and
 `quality_runtime_eligible=false` remain intact in provenance.
 
-The prediction bundle has no FP16 targets. The separately supplied
-[`agx2-reference-repeat3/`](agx2-reference-repeat3/) is now the default target
-source. Its two original files are preserved byte for byte. `reference.json`
-has eight rows `[length, r_p_ttft_s, r_d_tpot_s]`: lengths 1024..8192, step1024.
-Targets are independent maxima of TTFT and request mean TPOT over three
-requests per length (24 requests total), using FP16 KV, default GPU DVFS
-nvhost_podgov 306..1122MHz, CPU2201.6MHz and EMC3199MHz. Only N>1 enters TPOT.
-Prefill/Decode policy multipliers remain1.0. Interpolate only length; never
-extrapolate. The original reference manifest retains
-`controller_integration_validated=false`.
+The prediction bundle has no FP16 targets. The latest target source is
+[`agx2-reference-repeat5/`](agx2-reference-repeat5/). The user supplied its
+310-byte `reference.json` on 2026-11-08; those bytes are preserved. Its eight
+rows are `[length, r_p_ttft_s, r_d_tpot_s]`, lengths 1024..8192, step 1024.
+Targets are independent maxima of TTFT and request mean TPOT over five
+requests per length (40 total): the baseline 24 plus supplement 16 requests.
+Conditions remain FP16 KV, default GPU DVFS nvhost_podgov 306..1122MHz,
+CPU2201.6MHz and EMC3199MHz. Only N>1 enters TPOT. Prefill/Decode policy
+multipliers remain 1.0. Interpolate only length; never extrapolate.
+
+The new `manifest.json` is a locally generated integration envelope, not a
+user-provided original manifest. It records the exact original table hash,
+source paths and hashes, context, aggregation and verification scope. The
+tracked `source-validation.json` records the 40 canonical result hashes,
+t0/t1/tN timestamps, N, repeat, timing metrics, per-request control checks and
+the two source runs' metadata. These were checked read-only against the AGX2
+canonical source results; the summary does not contain original request JSON,
+prompts or output token IDs. The loader requires its exact hash and byte count
+and includes it alongside `reference.json` in target `files_sha256` binding.
+This source check preserves `controller_integration_validated=false` and
+establishes no new controller, accuracy, quality, SLO or formal qualification.
+
+The older [`agx2-reference-repeat3/`](agx2-reference-repeat3/) keeps both
+original files unchanged for explicit reproduction of the three-repeat,
+24-request targets. Each version has its own trusted manifest pin and exact
+measurement context; changing a repeat count cannot authorize a new export.
 
 `CompactLUTRepository` accepts only the two explicitly trusted prediction
-manifests. `--reference-lut-dir` accepts the pinned new
+manifests. `--reference-lut-dir` accepts either pinned three/five-repeat
 `CompactReferenceRepository` or the unchanged sealed AGX2
 `MeasuredLUTRepository` for historical reproduction. Current use:
 
 ```sh
-kvolt run --lut-dir data/luts/agx2-runtime-repeat5 --reference-lut-dir data/luts/agx2-reference-repeat3 ...
-kvolt diagnose --lut-bundle data/luts/agx2-runtime-repeat5 --reference-lut-dir data/luts/agx2-reference-repeat3 ...
-python3 tools/latest_tpot_audit.py --latest-dir data/luts/agx2-runtime-repeat5 --reference-lut-dir data/luts/agx2-reference-repeat3 --output audit.json
+kvolt run --lut-dir data/luts/agx2-runtime-repeat5 --reference-lut-dir data/luts/agx2-reference-repeat5 ...
+kvolt diagnose --lut-bundle data/luts/agx2-runtime-repeat5 --reference-lut-dir data/luts/agx2-reference-repeat5 ...
+python3 tools/latest_tpot_audit.py --latest-dir data/luts/agx2-runtime-repeat5 --reference-lut-dir data/luts/agx2-reference-repeat5 --output audit.json
 ```
 
-Provenance retains both complete original compact manifests and separate
-target conditions. Device mismatch is calculated from their actual source
-devices. Matching devices establish no accuracy, SLO, quality eligibility or
+Provenance retains complete prediction and reference manifests, including the
+locally generated five-repeat envelope, and separate target conditions. Device
+mismatch is calculated from their actual source devices. Matching devices establish no accuracy, SLO, quality eligibility or
 formal qualification. An existing grant cannot authorize the new source/pins.
 The sealed loader's original manifest pin and target contract remain unchanged.
 
@@ -65,6 +81,9 @@ Reference hashes:
 
 | File | SHA-256 |
 | --- | --- |
+| `agx2-reference-repeat5/manifest.json` | `d61c1b6a6ccd0aaa80b0cf4645702eaee09bd406dac084df70f151669a9b74ee` |
+| `agx2-reference-repeat5/reference.json` | `0892b309e9124553f0b5a1410241060648b68f5be7c9c02db7e1d3b0fd640151` |
+| `agx2-reference-repeat5/source-validation.json` | `a51bcff64f8e291d4121b0578c23ef211bad5c3e772f396ca31098d55400aa93` |
 | `agx2-reference-repeat3/manifest.json` | `00d5112eaf9b0cdad2420b7622522c5d0913196e47681a286c99e19eeeeae15c` |
 | `agx2-reference-repeat3/reference.json` | `0a1382b6a6a3b64626f4195902c3bdee325b58ff993714a4d4eb9d0693263b17` |
 

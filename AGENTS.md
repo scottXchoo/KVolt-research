@@ -13,7 +13,7 @@
 
 열 정의·단위·격자·출처·SHA-256은 `data/luts/README.md`를 확인한다. 향후 LUT 분석·수치 답변은 이 묶음을 우선 조회한다. 이전 AGX1 묶음 `data/luts/latest/`은 과거 결과 재현용으로 보존하며 명시적으로 선택할 수 있다. 디렉터리 이름 latest가 새 AGX2 묶음보다 우선하지 않는다.
 
-두 경량 예측 묶음은 `CompactLUTRepository`와 명시적인 `--reference-lut-dir`로 사용한다. 최신 FP16 목표 참조는 `data/luts/agx2-reference-repeat3/`의 `manifest.json`과 `reference.json`이다. A2 길이당3회·총24요청에서 TTFT와 요청별 평균 TPOT의 독립 최댓값을 보존하며 목표 배율은1.0이다. `CompactReferenceRepository`가 새 참조를 직접 읽는다. 이전 봉인 `MeasuredLUTRepository` 참조도 재현용으로 명시 선택할 수 있으며 기존 계약과 pin을 완화하지 않는다. 새 원본6파일을 수정하지 않는다. 원본 validation의 runtime accuracy/SLO 및 Quality 적격성 false, 참조의 controller integration false를 보존한다. 장치가 일치해도 로더 연결만으로 정확성·SLO·기존 formal qualification을 승계하지 않는다. 이전 grant는 바뀐 source/pin을 거부해야 한다.
+두 경량 예측 묶음은 `CompactLUTRepository`와 명시적인 `--reference-lut-dir`로 사용한다. 최신 FP16 목표 참조는 `data/luts/agx2-reference-repeat5/`다. 사용자 제공 `reference.json`의 바이트를 보존하고 A2 길이당5회·총40요청에서 TTFT와 요청별 평균 TPOT의 독립 최댓값을 사용하며 목표 배율은1.0이다. `manifest.json`은 로컬 생성한 통합 envelope이며 사용자 제공 원본 manifest가 아니다. `source-validation.json`은 AGX2 기준24·보강16요청의 canonical result SHA·시간·CPU 고정/기본 GPU 제어를 읽기 전용으로 대조한 요약이다. 원 요청 JSON·prompt·출력 token ID를 포함하지 않는다. `CompactReferenceRepository`는 새 표와 이 검증 요약의 SHA·바이트를 검증하고 둘 모두 목표 출처에 바인딩한다. 이전 `data/luts/agx2-reference-repeat3/`의 원본2파일은 3회·총24요청 재현용으로 보존하며 명시 선택한다. 이전 봉인 `MeasuredLUTRepository` 참조도 재현용으로 명시 선택할 수 있으며 기존 계약과 pin을 완화하지 않는다. Runtime 원본4파일·3회 Reference 원본2파일·새 5회 Reference 묶음3파일을 수정하지 않는다. 원본 validation의 runtime accuracy/SLO 및 Quality 적격성 false, 참조의 controller integration false를 보존한다. 장치가 일치해도 로더 연결만으로 정확성·SLO·기존 formal qualification을 승계하지 않는다. 이전 grant는 바뀐 source/pin을 거부해야 한다.
 
 ## 1. 연구 문서 확인
 

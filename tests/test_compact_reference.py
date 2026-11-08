@@ -45,13 +45,15 @@ def copied(tmp_path):
 
 def semantic_reseal(monkeypatch, root, manifest, rows=None):
     """Bypass trusted hash only in semantic tests; never modify original files."""
+    original_pin = hashlib.sha256((root / 'manifest.json').read_bytes()).hexdigest()
     if rows is not None:
         data = json.dumps(rows).encode()
         (root / 'reference.json').write_bytes(data)
         manifest['table'].update(bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
     raw = json.dumps(manifest).encode()
     (root / 'manifest.json').write_bytes(raw)
-    monkeypatch.setattr(module, 'COMPACT_REFERENCE_MANIFEST_SHA256', hashlib.sha256(raw).hexdigest())
+    monkeypatch.setitem(module._TRUSTED_REFERENCE_MANIFESTS, hashlib.sha256(raw).hexdigest(),
+                        module._TRUSTED_REFERENCE_MANIFESTS[original_pin])
 
 
 def test_original_hashes_bytes_and_all_eight_targets(reference):

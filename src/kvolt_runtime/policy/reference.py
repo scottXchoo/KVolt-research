@@ -9,6 +9,7 @@ from .types import LUTError, LUTProvenance, PERFORMANCE_LENGTHS, length as valid
 
 
 COMPACT_REFERENCE_MANIFEST_SHA256 = '00d5112eaf9b0cdad2420b7622522c5d0913196e47681a286c99e19eeeeae15c'
+COMPACT_REFERENCE_REPEAT5_MANIFEST_SHA256 = 'd61c1b6a6ccd0aaa80b0cf4645702eaee09bd406dac084df70f151669a9b74ee'
 _CONTEXT = {
     'device_id': 'A2', 'model_id': 'meta-llama/Llama-3.1-8B-Instruct',
     'model_revision': '0e9e39f249a16976918f6564b8830bc894c89659',
@@ -22,9 +23,16 @@ _CONTEXT = {
     'aggregation': 'independent_maximum_TTFT_and_request_mean_TPOT_per_length',
     'prefill_boundary': 't0..t1', 'decode_TPOT': '(tN-t1)/(N-1); only N>1',
 }
+_TRUSTED_REFERENCE_MANIFESTS = {
+    COMPACT_REFERENCE_MANIFEST_SHA256: _CONTEXT,
+    COMPACT_REFERENCE_REPEAT5_MANIFEST_SHA256: {
+        **_CONTEXT, 'technical_repeats_per_length': 5, 'total_requests': 40,
+    },
+}
+COMPACT_REFERENCE_MANIFEST_SHA256S = frozenset(_TRUSTED_REFERENCE_MANIFESTS)
 
 
-def _manifest_contract(manifest):
+def _manifest_contract(manifest, expected_context):
     if (type(manifest) is not dict
             or manifest.get('schema') != 'kvolt.reference-lut.v1'
             or manifest.get('units') != {'length': 'tokens', 'r_p_ttft_s': 's', 'r_d_tpot_s': 's/token'}
@@ -32,7 +40,7 @@ def _manifest_contract(manifest):
                 'axis': 'length', 'method': 'piecewise_linear', 'extrapolation': False}):
         raise LUTError('unsupported compact reference schema, units or interpolation')
     # Canonical JSON distinguishes boolean values from integer repeat counts.
-    if json.dumps(manifest['context'], sort_keys=True, allow_nan=False) != json.dumps(_CONTEXT, sort_keys=True):
+    if json.dumps(manifest['context'], sort_keys=True, allow_nan=False) != json.dumps(expected_context, sort_keys=True):
         raise LUTError('compact reference source context does not match its trusted contract')
     if (json.dumps(manifest['policy_multipliers'], sort_keys=True, allow_nan=False)
             != json.dumps({'prefill': 1.0, 'decode': 1.0}, sort_keys=True)):
@@ -47,10 +55,24 @@ def _manifest_contract(manifest):
         raise LUTError('invalid compact reference table contract')
     validation = manifest['validation']
     if (type(validation['canonical_requests_verified']) is not int
-            or validation['canonical_requests_verified'] != 24
+            or validation['canonical_requests_verified'] != expected_context['total_requests']
             or validation['raw_maxima_and_slo_values_preserved'] is not True
             or validation['controller_integration_validated'] is not False):
         raise LUTError('invalid compact reference source validation contract')
+    if expected_context['technical_repeats_per_length'] == 5:
+        evidence = manifest['evidence_files']
+        if type(evidence) is not dict or set(evidence) != {'source-validation.json'}:
+            raise LUTError('compact reference requires source-validation.json evidence')
+        if any(validation.get(key) is not True for key in (
+                'canonical_hashes_checked', 'timestamp_metrics_checked', 'request_cpu_gpu_controls_checked')):
+            raise LUTError('invalid compact reference canonical source validation contract')
+
+
+def _bundle_file(root, name):
+    path = root / name
+    if path.is_symlink() or path.resolve().parent != root:
+        raise LUTError(f'compact reference file escapes the bundle or is a symlink: {name}')
+    return path
 
 
 class CompactReferenceRepository:
@@ -62,21 +84,30 @@ class CompactReferenceRepository:
 
     def __init__(self, reference_path):
         root = Path(reference_path).resolve()
-        manifest_data = _read(root / 'manifest.json')
-        if hashlib.sha256(manifest_data).hexdigest() != COMPACT_REFERENCE_MANIFEST_SHA256:
+        manifest_data = _read(_bundle_file(root, 'manifest.json'))
+        manifest_sha256 = hashlib.sha256(manifest_data).hexdigest()
+        expected_context = _TRUSTED_REFERENCE_MANIFESTS.get(manifest_sha256)
+        if expected_context is None:
             raise LUTError('unknown or modified compact reference manifest SHA-256')
         try:
             manifest = _json(manifest_data, 'manifest.json')
-            _manifest_contract(manifest)
+            _manifest_contract(manifest, expected_context)
             table = manifest['table']
-            path = root / table['file']
-            if path.resolve().parent != root:
-                raise LUTError('compact reference file escapes the bundle')
-            data = _read(path)
+            data = _read(_bundle_file(root, table['file']))
             if hashlib.sha256(data).hexdigest() != table['sha256']:
                 raise LUTError('LUT SHA-256 mismatch: reference.json')
             if type(table['bytes']) is not int or len(data) != table['bytes']:
                 raise LUTError('compact reference byte count mismatch')
+            hashes = [('reference.json', table['sha256'])]
+            if expected_context['technical_repeats_per_length'] == 5:
+                name = 'source-validation.json'
+                spec = manifest['evidence_files'][name]
+                evidence_data = _read(_bundle_file(root, name))
+                if hashlib.sha256(evidence_data).hexdigest() != spec['sha256']:
+                    raise LUTError(f'LUT SHA-256 mismatch: {name}')
+                if type(spec['bytes']) is not int or len(evidence_data) != spec['bytes']:
+                    raise LUTError(f'compact reference byte count mismatch: {name}')
+                hashes.append((name, spec['sha256']))
             rows = _json(data, 'reference.json')
             if type(rows) is not list or len(rows) != len(PERFORMANCE_LENGTHS):
                 raise LUTError('compact reference requires eight complete target rows')
@@ -91,12 +122,13 @@ class CompactReferenceRepository:
                 raise LUTError('incomplete compact reference length grid')
             self._prefill_target = MappingProxyType(prefill)
             self._decode_target = MappingProxyType(decode)
+            repeats = {3: 'three', 5: 'five'}[expected_context['technical_repeats_per_length']]
             self.provenance = LUTProvenance(
                 kind='measured', source_device='AGX2', source_commit=None,
-                manifest_sha256=COMPACT_REFERENCE_MANIFEST_SHA256,
-                files_sha256=(('reference.json', table['sha256']),),
+                manifest_sha256=manifest_sha256,
+                files_sha256=tuple(hashes),
                 notes=(
-                    'AGX2 FP16 independent raw maxima over three requests per length; multipliers 1.0.',
+                    f'AGX2 FP16 independent raw maxima over {repeats} requests per length; multipliers 1.0.',
                     'Source controller integration remains unvalidated; no automatic formal qualification.',
                 ),
                 metadata_json=json.dumps({'reference_manifest': manifest}, sort_keys=True, allow_nan=False),
