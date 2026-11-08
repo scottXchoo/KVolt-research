@@ -17,6 +17,14 @@ KVolt의 고정 기본 LUT 진입점은 `data/luts/current/selection.json`이다
 
 두 경량 예측 묶음을 명시적으로 선택할 때는 `CompactLUTRepository`와 명시적인 `--reference-lut-dir`로 사용한다. 기본 선택은 위 current 파일이 예측·참조를 함께 지정한다. 최신 FP16 목표 참조는 `data/luts/agx2-reference-repeat10/`다. 사용자 제공 `reference.json`의 원본310bytes를 보존하고 A2 길이당10회·총80요청에서 TTFT와 요청별 평균 TPOT의 독립 최댓값을 사용하며 목표 배율은1.0이다. 길이만 보간하고 외삽하지 않으며 N=1은 TPOT 집계에서 제외한다. `manifest.json`은 로컬 생성한 통합 envelope이며 사용자 제공 원본 manifest가 아니다. `source-validation.json`은 AGX2 merged export의 기준24·1차보강16·2차보강40요청, 총80개 canonical result 바이트·SHA·source-origin/protocol hash 결속·시간·CPU 고정/기본 GPU 제어를 읽기 전용으로 대조한 요약이다. 개별 component 원본 디렉터리는 현재 없어 원본 manifest/completion SHA는 상속 선언이며 이번에 재검증하지 않았다(`original_component_manifests_rechecked=false`). 원 요청 JSON·prompt·출력 token ID를 포함하지 않는다. `CompactReferenceRepository`는 새 표와 이 검증 요약의 SHA·바이트를 검증하고 둘 모두 목표 출처에 바인딩한다. 이전 `data/luts/agx2-reference-repeat5/`의3파일은 5회·총40요청, `data/luts/agx2-reference-repeat3/`의 원본2파일은 3회·총24요청 재현용으로 보존하며 명시 선택한다. 이전 봉인 `MeasuredLUTRepository` 참조도 재현용으로 명시 선택할 수 있으며 기존 계약과 pin을 완화하지 않는다. Runtime 원본4파일·3회 Reference 원본2파일·5회 Reference 묶음3파일·새 10회 Reference 묶음3파일을 수정하지 않는다. 원본 validation의 runtime accuracy/SLO 및 Quality 적격성 false, 참조의 controller integration false를 보존한다. 장치가 일치해도 로더 연결만으로 정확성·SLO·기존 formal qualification을 승계하지 않는다. 이전 grant는 바뀐 source/pin을 거부해야 한다. 이번 등록에 GPU 재실측·push는 포함하지 않는다.
 
+## Runtime 실측 기반 Online LUT
+
+2026-11-09 사용자 요청에 따라 개발 `kvolt run`은 Offline 원본을 초기값으로 하는 별도 Online 보정 표를 사용한다. 원본 LUT/manifest/SHA, Quality와 FP16 Reference 목표를 수정하지 않는다. 기본 상태 파일은 `output-dir/online-lut.json`이고, `--online-lut-state PATH`로 동일 조건의 상태를 재사용하며 `--no-online-lut`로 동결 실행을 재현한다. `--online-lut-alpha`의 기본값은0.1이다. 정식 `performance`는 기존 동결 LUT와 qualification을 사용하며 Online 적격성을 승계하지 않는다.
+
+요청 시작 시 보정 revision을 고정하고, 정상 생성의 유효한 실측과 원 관측을 저장한 뒤 해당 요청의 정확한 `(L,f)`·`(L,G,f)` 지표를 EMA로 갱신한다. 갱신값은 다음 요청부터 반영한다. 비격자 길이 관측을 이웃 knot에 전파하지 않으며, 미관측 길이는 기존 Offline 길이 보간을 사용한다. 보정 후 시간 단조성을 가정하지 않고 필터·정확동점·fallback을 유지한다. 전력 미계측·무효이면 시간만 갱신하고 `N=1`은 Decode에서 제외한다. 유효한 SLO 위반과 복원만 실패한 정상 측정을 자동 제외하지 않는다. 실제 출력 수 통계·사용 revision·초기/최종 snapshot·갱신 영수증을 보존한다.
+
+전체 Prefill/Decode 측정 경계에 포함된 제어·주파수·최초 packing 비용을 다시 합산하지 않는다. `Nmax−1` 계획 예산과 실제 `N−1` 지표를 유지하며, 출력 길이 예측기나 새 SLO 보장을 도입하지 않는다. 상태는 baseline·모델·장치/전력·소프트웨어 조건에 결속하고 손상·불일치·동시 쓰기 충돌·저장 실패를 숨기지 않는다. 상세 계약과 검증 한계는 `docs/online-lut.md` 및 Notion Method의 Runtime 실측 피드백 절을 따른다.
+
 ## 1. 연구 문서 확인
 
 작업을 시작하기 전에 Notion의 **[연구] KVolt**와 해당 작업에 관련된 하위 문서를 읽는다. 기억이나 이 파일의 요약만으로 최신 요구사항을 대신하지 않는다.

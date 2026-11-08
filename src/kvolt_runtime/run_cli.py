@@ -4,6 +4,7 @@ from contextlib import contextmanager, redirect_stdout
 from dataclasses import asdict, dataclass
 from importlib import metadata
 import os
+import math
 from pathlib import Path
 import signal
 import sys
@@ -50,6 +51,12 @@ def configure_parser(parser):
                         help='basic development or full natural-generation formal coverage (default: basic)')
     parser.add_argument('--qualification', type=Path,
                         help='M4 evidence report matching the current source, device and measurement profiles')
+    parser.add_argument('--online-lut-state', type=Path,
+                        help='reuse compatible adaptive state; default: output-dir/online-lut.json')
+    parser.add_argument('--no-online-lut', action='store_true',
+                        help='use the frozen source LUT without request feedback')
+    parser.add_argument('--online-lut-alpha', type=float, default=None,
+                        help='EMA weight in (0,1], default 0.1; development only')
     return parser
 
 
@@ -148,6 +155,41 @@ def _runtime_metadata():
     return capture()
 
 
+def _identity(value):
+    """Discard artifact locations and import-state noise from source identities.
+
+    Hardware profiles do not use this filter: their sysfs paths and collection
+    timing settings identify the measurement/control conditions themselves.
+    """
+    if isinstance(value, dict):
+        return {key: _identity(item) for key, item in value.items()
+                if key not in ('path', 'loaded_versions', 'source_worktree_dirty')
+                and not key.endswith('_path')}
+    if isinstance(value, (tuple, list)):
+        return [_identity(item) for item in value]
+    return value
+
+
+def _online_context(args, provenance):
+    from .backend.provenance import MODEL_FILES, NATIVE_BUILD_PROFILES, SOURCE_HASHES, VERSIONS
+    installed = {}
+    for package in sorted(set(VERSIONS) | {'tokenizers', 'numpy', 'scipy', 'kneed'}):
+        try:
+            installed[package] = metadata.version(package)
+        except metadata.PackageNotFoundError:
+            installed[package] = None
+    return {'model': {'snapshot': SNAPSHOT, 'files_sha256': dict(MODEL_FILES)},
+            'input_tokenizer': _identity(provenance['input_tokenizer']),
+            'native_profile': args.native_profile,
+            'native_build': dict(NATIVE_BUILD_PROFILES[args.native_profile]),
+            'backend_source_sha256': dict(SOURCE_HASHES),
+            'device_profile': provenance['device_profile'],
+            'power_profile': provenance.get('power_profile'),
+            'collect_power': args.collect_power,
+            'runtime': _identity(provenance['runtime']),
+            'installed_distribution_versions': installed}
+
+
 @dataclass(frozen=True)
 class RunFactories:
     """Narrow construction seam for CPU tests and internal qualification harnesses.
@@ -231,7 +273,8 @@ def _stdout_channel(emit):
 
 def _resolved(args):
     return {key: (None if value is MISSING else
-                  os.path.abspath(value) if isinstance(value, Path) else to_json_native(value))
+                  os.path.abspath(value) if isinstance(value, Path) else
+                  str(value) if type(value) is float and not math.isfinite(value) else to_json_native(value))
             for key, value in vars(args).items() if not key.startswith('_')}
 
 
@@ -278,6 +321,20 @@ def run(args, *, lock=None, factories=None, emit=None):
     unlock_errors = []
     with _stdout_channel(emit) as output:
         try:
+            online_state = getattr(args, 'online_lut_state', None)
+            online_alpha = getattr(args, 'online_lut_alpha', None)
+            online_disabled = getattr(args, 'no_online_lut', False)
+            if online_disabled and (online_state is not None or online_alpha is not None):
+                raise ValueError('--no-online-lut conflicts with --online-lut-state/--online-lut-alpha')
+            if online_alpha is not None and (not math.isfinite(online_alpha) or not 0 < online_alpha <= 1):
+                raise ValueError('--online-lut-alpha must be finite and in (0,1]')
+            if args.mode == 'performance' and (online_state is not None or online_alpha is not None):
+                raise ValueError('adaptive LUT has no formal performance qualification; omit online state/alpha')
+            online_enabled = args.mode == 'development' and not online_disabled
+            provenance['online_lut'] = {'enabled': online_enabled,
+                'policy': 'request_end_exact_length_ema' if online_enabled else 'frozen',
+                'disabled_reason': None if online_enabled else
+                    ('explicit_no_online_lut' if online_disabled else 'formal_performance_frozen')}
             if getattr(args, 'reference_lut_dir', None) is not None and args.mock is not None:
                 raise ValueError('--reference-lut-dir requires --lut-dir; cannot combine with --mock')
             qualification_path = getattr(args, 'qualification', None)
@@ -323,8 +380,23 @@ def run(args, *, lock=None, factories=None, emit=None):
             stage, failure_code = 'preflight_save', 1
             provenance['preflight_paths'] = recorder.save_preflight(prepared)
             stage = 'dependency'
+            if online_enabled:
+                provenance['runtime'] = factories.runtime_metadata()
+                stage, failure_code = 'online_lut', 2
+                from .policy.online import OnlineLUTRepository
+                repo = OnlineLUTRepository(repo,
+                    state_path=online_state if online_state is not None else recorder.output_dir / 'online-lut.json',
+                    context=_online_context(args, provenance),
+                    alpha=0.1 if online_alpha is None else online_alpha)
+                provenance['online_lut']['initial'] = repo.snapshot()
+                stage, failure_code = 'online_lut_initial_save', 1
+                provenance['online_lut']['initial_path'] = recorder.atomic_json(
+                    'online-lut.initial.json', repo.export_state())
+            stage = 'dependency'
             dc = factories.decode_controller(repo, prepared, factories.clock)
-            provenance['runtime'] = factories.runtime_metadata()
+            if not online_enabled:
+                # Formal grants retain the original dependency-load/capture order.
+                provenance['runtime'] = factories.runtime_metadata()
             qualification = None
             if args.mode == 'performance':
                 stage, failure_code = 'qualification', 2

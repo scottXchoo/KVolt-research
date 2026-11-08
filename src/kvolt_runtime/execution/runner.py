@@ -74,9 +74,13 @@ class SessionRunner:
         self.warmup = warmup
         self.qualification = qualification
         self._first_collector = None
+        from ..policy.online import OnlineLUTRepository
+        self.online = repo if isinstance(repo, OnlineLUTRepository) else None
 
     def _performance_gate(self, prepared, options, provenance):
         """Reject incomplete or mismatched qualification before hardware work."""
+        if self.online is not None:
+            raise ContractError('adaptive LUT has no formal performance qualification')
         from ..qualification.contracts import QualificationGrant
         if not isinstance(self.qualification, QualificationGrant):
             raise ContractError('M4 validated qualification grant is required for performance execution')
@@ -433,6 +437,24 @@ class SessionRunner:
         result['paths'] = paths
         # Store paths in the final result after all files have actually appeared.
         self.recorder.atomic_json(f'requests/{index:06d}/result.json', result)
+        if self.online is not None and result['generation']['status'] != 'not_run':
+            online = result['online_lut']
+            observation_path = f'requests/{index:06d}/online-observation.json'
+            online['observation_path'] = None
+            try:
+                # This durable original precedes state mutation. Both are outside
+                # t0..tN; the complete measured intervals need no cost added.
+                online['observation_path'] = self.recorder.atomic_json(observation_path, result)
+                online['feedback'] = self.online.observe(
+                    result, observation_id=online['observation_id'])
+            except Exception as error:
+                state = self.online.snapshot()
+                online['feedback'] = {'status': 'failed', 'updated': [],
+                    'before_revision': online['used']['revision'],
+                    'after_revision': state['revision'], 'state': state,
+                    'reasons': [str(error)]}
+                result['errors'].append(error_record(error, stage='online_lut_feedback'))
+            self.recorder.atomic_json(f'requests/{index:06d}/result.json', result)
         record = {'schema_version': 'kvolt-stdout-v1', 'record_type': 'request_result',
                   'session_id': session['session_id'], 'request_id': item.spec.request_id,
                   'attempt': 1, 'index': index, 'text': text,
@@ -441,6 +463,8 @@ class SessionRunner:
                   'memory_status': result['memory']['status'],
                   'cleanup_status': result['cleanup']['status'],
                   'artifact_root': str(self.recorder.output_dir), **paths}
+        if 'online_lut' in result:
+            record['online_lut'] = result['online_lut'].get('feedback')
         self.emit(record)
         session['request_records'].append(record)
 
@@ -456,6 +480,18 @@ class SessionRunner:
                 stage = 'qualification'
                 self._performance_gate(prepared, options, provenance or {})
                 session['qualification'] = self.qualification.as_dict()
+            if self.online is not None:
+                stage = 'online_lut_initial_save'
+                online_provenance = session['provenance'].setdefault('online_lut', {})
+                online_provenance.setdefault('enabled', True)
+                online_provenance.setdefault('policy', 'request_end_exact_length_ema')
+                online_provenance.setdefault('disabled_reason', None)
+                if 'initial_path' not in online_provenance:
+                    online_provenance['initial_path'] = self.recorder.atomic_json(
+                        'online-lut.initial.json', self.online.export_state())
+                online_provenance.setdefault('initial', self.online.snapshot())
+                session['online_lut'] = {'initial': self.online.snapshot(),
+                    'initial_path': online_provenance['initial_path']}
             stage = 'device_preparation'
             snapshot = self.device.capture()
             if not snapshot.get('verified'):
@@ -489,7 +525,11 @@ class SessionRunner:
                     if session['exit_code'] or self.stop.requested:
                         break
                     stage = 'request'
+                    used = self.online.snapshot() if self.online is not None else None
                     result = self._request(item, index, snapshot, options.collect_power)
+                    if used is not None:
+                        result['online_lut'] = {'used': used,
+                            'observation_id': f'{session["session_id"]}:{index}'}
                     session['results'].append(result)
                     try:
                         self._save_emit(result, item, index, session)
@@ -548,6 +588,14 @@ class SessionRunner:
             if session['status'] != 'completed':
                 session['provenance']['formal_performance_qualified'] = False
             session['ended_ns'] = self.clock()
+            if self.online is not None:
+                try:
+                    final_path = self.recorder.atomic_json('online-lut.final.json', self.online.export_state())
+                    session.setdefault('online_lut', {}).update(final=self.online.snapshot(), final_path=final_path)
+                except Exception as error:
+                    session['errors'].append(error_record(error, stage='online_lut_final_save'))
+                    if not self.stop.requested:
+                        session.update(status='failed', exit_code=EXIT_TECHNICAL)
             try:
                 self.recorder.save_session(session)
             except Exception as error:
