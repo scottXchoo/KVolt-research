@@ -4,15 +4,16 @@
 
 ## 최신 LUT 조회 기준
 
-사용자가 2026-11-07 제공한 아래 세 파일을 최신 LUT 값 조회의 기본 근거로 사용한다. 원본 수치와 파일 바이트를 보존한다.
+사용자가 2026-11-08 제공한 `data/luts/agx2-runtime-repeat5/`의 아래 네 파일을 최신 LUT 값 조회의 기본 근거로 사용한다. 원본 수치와 파일 바이트를 보존한다.
 
-- Prefill: `data/luts/latest/prefill.json` — `[length, gpu_mhz, ttft_s, prefill_energy_j]`, 64셀.
-- Decode: `data/luts/latest/decode.json` — `[length, group, gpu_mhz, tpot_actual_s, epsilon_actual_j_per_token]`, 320셀.
-- Quality: `data/luts/latest/quality.json` — `[length, group, mean_score]`, 75셀.
+- Manifest: `data/luts/agx2-runtime-repeat5/manifest.json` — SHA-256 `b421fcd10ecb57df7d6962aa9a5f48e264e90defc0c76a3544218d31685f783b`.
+- Prefill: `data/luts/agx2-runtime-repeat5/prefill.json` — `[length, gpu_mhz, ttft_s, prefill_energy_j]`, 64셀. A2 전체5G×각5회=25관측의 산술평균.
+- Decode: `data/luts/agx2-runtime-repeat5/decode.json` — `[length, group, gpu_mhz, tpot_actual_s, epsilon_actual_j_per_token]`, 320셀. A2 셀당5회 평균 원값 보존.
+- Quality: `data/luts/agx2-runtime-repeat5/quality.json` — `[length, group, mean_score]`, 75셀. A1 RULER 길이당100문항의 원점수 유지.
 
-열 정의·단위·격자·출처·SHA-256은 `data/luts/README.md`를 확인한다. 향후 LUT 분석·수치 답변은 이 파일들을 우선 조회하며, 과거 실험 재현을 명시적으로 요청받은 경우에만 해당 과거 묶음을 사용한다. 형제 체크아웃 `KVolt-lut-source`의 AGX2 repeat5 묶음을 최신값으로 간주하지 않는다.
+열 정의·단위·격자·출처·SHA-256은 `data/luts/README.md`를 확인한다. 향후 LUT 분석·수치 답변은 이 묶음을 우선 조회한다. 이전 AGX1 묶음 `data/luts/latest/`은 과거 결과 재현용으로 보존하며 명시적으로 선택할 수 있다. 디렉터리 이름 latest가 새 AGX2 묶음보다 우선하지 않는다.
 
-이 세 파일은 AGX1 경량 배열 형식이다. 원본 manifest는 AGX1에서 회수한 `data/luts/latest/manifest.json`으로 보존한다. `CompactLUTRepository`와 명시적인 `--reference-lut-dir`를 사용하며, 기존 `MeasuredLUTRepository`의 AGX2 봉인 묶음 계약은 유지한다. 최신 AGX1 자료에 같은 캠페인의 전체 FP16 목표 참조가 포함된 것은 아니다. AGX2에 적용할 때는 최신 AGX1 예측과 기존 AGX2 목표를 별도 출처로 기록하는 development 실행으로 구분한다. 최신 파일의 배치나 로더 연결만으로 장치 간 정확성·SLO 또는 기존 적격성의 승계를 주장하지 않는다.
+두 경량 예측 묶음은 `CompactLUTRepository`와 명시적인 `--reference-lut-dir`로 사용한다. 최신 FP16 목표 참조는 `data/luts/agx2-reference-repeat3/`의 `manifest.json`과 `reference.json`이다. A2 길이당3회·총24요청에서 TTFT와 요청별 평균 TPOT의 독립 최댓값을 보존하며 목표 배율은1.0이다. `CompactReferenceRepository`가 새 참조를 직접 읽는다. 이전 봉인 `MeasuredLUTRepository` 참조도 재현용으로 명시 선택할 수 있으며 기존 계약과 pin을 완화하지 않는다. 새 원본6파일을 수정하지 않는다. 원본 validation의 runtime accuracy/SLO 및 Quality 적격성 false, 참조의 controller integration false를 보존한다. 장치가 일치해도 로더 연결만으로 정확성·SLO·기존 formal qualification을 승계하지 않는다. 이전 grant는 바뀐 source/pin을 거부해야 한다.
 
 ## 1. 연구 문서 확인
 

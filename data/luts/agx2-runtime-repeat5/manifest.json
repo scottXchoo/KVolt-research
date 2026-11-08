@@ -1,0 +1,223 @@
+{
+  "schema": "kvolt.runtime-lut.v1",
+  "created_utc": "2026-11-08T05:24:01.156163+00:00",
+  "context": {
+    "model_id": "meta-llama/Llama-3.1-8B-Instruct",
+    "model_revision": "0e9e39f249a16976918f6564b8830bc894c89659",
+    "weight_dtype": "float16",
+    "kv_precision": "K2V2",
+    "residual_length": 128,
+    "performance_device_id": "A2",
+    "performance_repeats_per_group": 5,
+    "prefill_aggregation": {
+      "method": "arithmetic_mean_over_all_group_request_observations",
+      "groups": [
+        8,
+        16,
+        32,
+        64,
+        128
+      ],
+      "repeats_per_group": 5,
+      "samples_per_cell": 25,
+      "total_requests": 1600,
+      "documents_per_length": 1
+    },
+    "decode_aggregation": {
+      "method": "source_cell_means_preserved",
+      "repeats_per_cell": 5
+    },
+    "cpu_khz": 2201600,
+    "emc_hz": 3199000000,
+    "prefill_cache": "original_fp16",
+    "performance_generation": {
+      "force_length": false,
+      "max_new_tokens": 512
+    },
+    "decode_measurement_boundary": "t1..tN, includes remaining controller work and initial K2V2 packing once",
+    "quality_source_device_id": "A1",
+    "quality_generation": {
+      "do_sample": false,
+      "force_length": false,
+      "max_new_tokens": 128,
+      "num_beams": 1
+    },
+    "quality_dataset": "RULER",
+    "quality_metric": "RULER_string_match_all",
+    "quality_items_per_length": 100
+  },
+  "interpolation": {
+    "axis": "length",
+    "method": "piecewise_linear",
+    "extrapolation": false
+  },
+  "units": {
+    "length": "tokens",
+    "gpu_mhz": "MHz",
+    "group": "elements per quantization group",
+    "ttft_s": "s",
+    "prefill_energy_j": "J",
+    "tpot_actual_s": "s/token",
+    "epsilon_actual_j_per_token": "J/token",
+    "mean_score": "raw score, 0..1"
+  },
+  "tables": {
+    "prefill": {
+      "file": "prefill.json",
+      "columns": [
+        "length",
+        "gpu_mhz",
+        "ttft_s",
+        "prefill_energy_j"
+      ],
+      "axes": {
+        "length": [
+          1024,
+          2048,
+          3072,
+          4096,
+          5120,
+          6144,
+          7168,
+          8192
+        ],
+        "gpu_mhz": [
+          408,
+          510,
+          612,
+          714,
+          816,
+          918,
+          1020,
+          1122
+        ]
+      },
+      "rows": 64,
+      "bytes": 2818,
+      "sha256": "bb9e800faf56b3d0d5e4d20081dd62c4638642908fbf121199d83c40ae445a47"
+    },
+    "decode": {
+      "file": "decode.json",
+      "columns": [
+        "length",
+        "group",
+        "gpu_mhz",
+        "tpot_actual_s",
+        "epsilon_actual_j_per_token"
+      ],
+      "axes": {
+        "length": [
+          1024,
+          2048,
+          3072,
+          4096,
+          5120,
+          6144,
+          7168,
+          8192
+        ],
+        "group": [
+          8,
+          16,
+          32,
+          64,
+          128
+        ],
+        "gpu_mhz": [
+          408,
+          510,
+          612,
+          714,
+          816,
+          918,
+          1020,
+          1122
+        ]
+      },
+      "rows": 320,
+      "bytes": 16702,
+      "sha256": "875c78e7af420b52719b3a29d4c43332a9e53581be1681fa1f5b79e8cda3bb4b"
+    },
+    "quality": {
+      "file": "quality.json",
+      "columns": [
+        "length",
+        "group",
+        "mean_score"
+      ],
+      "axes": {
+        "length": [
+          1024,
+          1536,
+          2048,
+          2560,
+          3072,
+          3584,
+          4096,
+          4608,
+          5120,
+          5632,
+          6144,
+          6656,
+          7168,
+          7680,
+          8192
+        ],
+        "group": [
+          8,
+          16,
+          32,
+          64,
+          128
+        ]
+      },
+      "rows": 75,
+      "bytes": 1764,
+      "sha256": "7804c10ea01c386cc52fe9367568951715d47b1d017aa790d299837db569235c"
+    }
+  },
+  "sources": {
+    "prefill": {
+      "path": "/mnt/kvolt-data/kvolt/artifacts/fresh-a2-lut/joint-repeat5-autocollect-20261102-r1/export/joint-request-records.json",
+      "sha256": "f44b12d8daae8db16928ffb00ad1937e26c8933ccf541d8352b9eeeaf14dc232",
+      "bytes": 38732346
+    },
+    "decode": {
+      "path": "/mnt/kvolt-data/kvolt/artifacts/fresh-a2-lut/joint-repeat5-autocollect-20261102-r1/export/decode-lut.json",
+      "sha256": "5fa09f8a0c1cf52a7eab602982a3825aee433e811f53fdb82ecc75ed90e45da2",
+      "bytes": 7279429
+    },
+    "quality": {
+      "path": "/mnt/kvolt-data/kvolt/artifacts/ruler-quality-hard30/ruler-a1-N40-A4-plus30-20261101-r1/analysis/quality-lut.json",
+      "sha256": "df17c17b76db64c08a8e0334d1ec40d2c267fa23149b440455ee4f8b3829f868",
+      "bytes": 231741
+    },
+    "performance_manifest": {
+      "path": "/mnt/kvolt-data/kvolt/artifacts/fresh-a2-lut/joint-repeat5-autocollect-20261102-r1/export/export-manifest.json",
+      "sha256": "12e3e7a48af09c25958e7f3cbbefe020cf37537884fb0c13b39858bd769fe31c",
+      "bytes": 1380264
+    },
+    "performance_spec": {
+      "path": "/mnt/kvolt-data/kvolt/artifacts/fresh-a2-lut/single-autocollect-20261029-r1/mirror/spec.json",
+      "sha256": "adc551f62bd59d9443010ab1bffc77003ba3c260548cbe2b0f31dda42c68dcc7",
+      "bytes": 14855
+    },
+    "performance_spec_manifest": {
+      "path": "/mnt/kvolt-data/kvolt/artifacts/fresh-a2-lut/single-autocollect-20261029-r1/mirror/manifest.json",
+      "sha256": "da334e78a2b7a96e97022c18e6f23264bc26a816aa8adcbd53dec9efcaeeeee5",
+      "bytes": 130046
+    },
+    "quality_manifest": {
+      "path": "/mnt/kvolt-data/kvolt/artifacts/ruler-quality-hard30/ruler-a1-N40-A4-plus30-20261101-r1/analysis/analysis-manifest.json",
+      "sha256": "bb984c58b64d374564cef0bfbe5b8ef16ff9fbe642d1f1a86c11d1f3d28d51fb",
+      "bytes": 734
+    }
+  },
+  "validation": {
+    "prefill_means_recomputed_from_all_raw_requests": true,
+    "decode_and_quality_values_preserved": true,
+    "source_integrity_checked_at_export": true,
+    "performance_runtime_accuracy_or_SLO_validated": false,
+    "quality_runtime_eligible": false
+  }
+}

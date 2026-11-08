@@ -1,0 +1,99 @@
+{
+  "schema": "kvolt.reference-lut.v1",
+  "created_utc": "2026-11-08T05:42:57.533207+00:00",
+  "context": {
+    "device_id": "A2",
+    "model_id": "meta-llama/Llama-3.1-8B-Instruct",
+    "model_revision": "0e9e39f249a16976918f6564b8830bc894c89659",
+    "weight_dtype": "float16",
+    "kv_precision": "FP16",
+    "generation": {
+      "force_length": false,
+      "max_new_tokens": 512
+    },
+    "cpu_khz": 2201600,
+    "emc_hz": 3199000000,
+    "gpu_policy": "default_governor_cap1122",
+    "gpu_governor": "nvhost_podgov",
+    "gpu_min_hz": 306000000,
+    "gpu_max_hz": 1122000000,
+    "technical_repeats_per_length": 3,
+    "total_requests": 24,
+    "documents_per_length": 1,
+    "aggregation": "independent_maximum_TTFT_and_request_mean_TPOT_per_length",
+    "prefill_boundary": "t0..t1",
+    "decode_TPOT": "(tN-t1)/(N-1); only N>1"
+  },
+  "interpolation": {
+    "axis": "length",
+    "method": "piecewise_linear",
+    "extrapolation": false
+  },
+  "units": {
+    "length": "tokens",
+    "r_p_ttft_s": "s",
+    "r_d_tpot_s": "s/token"
+  },
+  "policy_multipliers": {
+    "prefill": 1.0,
+    "decode": 1.0
+  },
+  "table": {
+    "file": "reference.json",
+    "columns": [
+      "length",
+      "r_p_ttft_s",
+      "r_d_tpot_s"
+    ],
+    "rows": 8,
+    "lengths": [
+      1024,
+      2048,
+      3072,
+      4096,
+      5120,
+      6144,
+      7168,
+      8192
+    ],
+    "bytes": 310,
+    "sha256": "0a1382b6a6a3b64626f4195902c3bdee325b58ff993714a4d4eb9d0693263b17"
+  },
+  "sources": {
+    "reference_curves": {
+      "path": "/home/agx3/Documents/Codex/2026-10-30/notion-plugin-notion-openai-curated-remote/outputs/20261101-fp16-dvfs-reference-a2/analysis/fp16-reference-curves.json",
+      "bytes": 9785,
+      "sha256": "662c326e5ff62db4d7bd34b8931c2401dcf09293114e322eb20a3fb5c5a373a0"
+    },
+    "slo_targets": {
+      "path": "/home/agx3/Documents/Codex/2026-10-30/notion-plugin-notion-openai-curated-remote/outputs/20261101-fp16-dvfs-reference-a2/analysis/slo-reference-pwl.json",
+      "bytes": 2086,
+      "sha256": "472996d1a4ace1b9c0d0969f01e66bdc93dd5376d4c3721a365c73f316797789"
+    },
+    "analysis_manifest": {
+      "path": "/home/agx3/Documents/Codex/2026-10-30/notion-plugin-notion-openai-curated-remote/outputs/20261101-fp16-dvfs-reference-a2/analysis/artifact-manifest.json",
+      "bytes": 1615,
+      "sha256": "716d6dd83d57a6d9ca72b684e156a9d91b95223ec51dad1f420f7e6cabb32fad"
+    },
+    "raw_manifest": {
+      "path": "/home/agx3/Documents/Codex/2026-10-30/notion-plugin-notion-openai-curated-remote/outputs/20261101-fp16-dvfs-reference-a2/raw/fp16-a2-dvfs-single-20261101-r1/manifest.json",
+      "bytes": 108343,
+      "sha256": "1079728db09e73f86b3abd2a4a0a5bc7323a7c28df3a745eda2b6ffc757e9347"
+    },
+    "raw_spec": {
+      "path": "/home/agx3/Documents/Codex/2026-10-30/notion-plugin-notion-openai-curated-remote/outputs/20261101-fp16-dvfs-reference-a2/raw/fp16-a2-dvfs-single-20261101-r1/spec.json",
+      "bytes": 11858,
+      "sha256": "e5dd5664ef83882ea72faf62160cdaf882a5383bce8dd099c299296ef19af399"
+    },
+    "raw_completion": {
+      "path": "/home/agx3/Documents/Codex/2026-10-30/notion-plugin-notion-openai-curated-remote/outputs/20261101-fp16-dvfs-reference-a2/raw/fp16-a2-dvfs-single-20261101-r1/completion.json",
+      "bytes": 2865,
+      "sha256": "c3ec120eedf57dabe51859c3ad9192cc1f816f8400f204ae7728f729ff719a46"
+    }
+  },
+  "validation": {
+    "canonical_requests_verified": 24,
+    "raw_maxima_and_slo_values_preserved": true,
+    "controller_integration_validated": false
+  }
+}

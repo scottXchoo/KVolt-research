@@ -1,11 +1,90 @@
 # Latest LUT lookup data
 
-Use [`latest/`](latest/) as the default source for future LUT value lookups.
+Use [`agx2-runtime-repeat5/`](agx2-runtime-repeat5/) as the default for LUT
+value lookups. The user supplied this four-file bundle on 2026-11-08. Its
+original bytes are tracked without modification. The directory named
+`latest/` below preserves the previous AGX1 export for explicit reproduction.
+
+## Current AGX2 runtime bundle
+
+Each data file is an array of positional numeric rows. All 459 cells remain
+unchanged, with the same axes, units, interpolation and range checks described
+below for the previous export.
+
+| File | Rows | Column order | Bytes |
+| --- | ---: | --- | ---: |
+| [`prefill.json`](agx2-runtime-repeat5/prefill.json) | 64 | `[length, gpu_mhz, ttft_s, prefill_energy_j]` | 2818 |
+| [`decode.json`](agx2-runtime-repeat5/decode.json) | 320 | `[length, group, gpu_mhz, tpot_actual_s, epsilon_actual_j_per_token]` | 16702 |
+| [`quality.json`](agx2-runtime-repeat5/quality.json) | 75 | `[length, group, mean_score]` | 1764 |
+
+Performance is from AGX2 (A2), with five repeats per group. Each Prefill cell
+is the arithmetic mean of all 25 observations: G=8/16/32/64/128, five requests
+each. This covers 1,600 raw requests and one document per length. Decode
+preserves the source cell means over five repeats. Quality remains the AGX1
+(A1) RULER raw score over 100 items per length. It does not become AGX2
+quality evidence when the performance device matches AGX2.
+
+The original [`manifest.json`](agx2-runtime-repeat5/manifest.json) records
+the full aggregation and generation context, source paths, hashes, byte counts,
+units and measurement boundary. Model revision is
+`0e9e39f249a16976918f6564b8830bc894c89659`, FP16 weights, K2V2, residual128,
+CPU2201600kHz and EMC3199000000Hz. Decode's t1..tN boundary includes remaining
+controller work and initial K2V2 packing once. Original validation flags
+`performance_runtime_accuracy_or_SLO_validated=false` and
+`quality_runtime_eligible=false` remain intact in provenance.
+
+The prediction bundle has no FP16 targets. The separately supplied
+[`agx2-reference-repeat3/`](agx2-reference-repeat3/) is now the default target
+source. Its two original files are preserved byte for byte. `reference.json`
+has eight rows `[length, r_p_ttft_s, r_d_tpot_s]`: lengths 1024..8192, step1024.
+Targets are independent maxima of TTFT and request mean TPOT over three
+requests per length (24 requests total), using FP16 KV, default GPU DVFS
+nvhost_podgov 306..1122MHz, CPU2201.6MHz and EMC3199MHz. Only N>1 enters TPOT.
+Prefill/Decode policy multipliers remain1.0. Interpolate only length; never
+extrapolate. The original reference manifest retains
+`controller_integration_validated=false`.
+
+`CompactLUTRepository` accepts only the two explicitly trusted prediction
+manifests. `--reference-lut-dir` accepts the pinned new
+`CompactReferenceRepository` or the unchanged sealed AGX2
+`MeasuredLUTRepository` for historical reproduction. Current use:
+
+```sh
+kvolt run --lut-dir data/luts/agx2-runtime-repeat5 --reference-lut-dir data/luts/agx2-reference-repeat3 ...
+kvolt diagnose --lut-bundle data/luts/agx2-runtime-repeat5 --reference-lut-dir data/luts/agx2-reference-repeat3 ...
+python3 tools/latest_tpot_audit.py --latest-dir data/luts/agx2-runtime-repeat5 --reference-lut-dir data/luts/agx2-reference-repeat3 --output audit.json
+```
+
+Provenance retains both complete original compact manifests and separate
+target conditions. Device mismatch is calculated from their actual source
+devices. Matching devices establish no accuracy, SLO, quality eligibility or
+formal qualification. An existing grant cannot authorize the new source/pins.
+The sealed loader's original manifest pin and target contract remain unchanged.
+
+Reference hashes:
+
+| File | SHA-256 |
+| --- | --- |
+| `agx2-reference-repeat3/manifest.json` | `00d5112eaf9b0cdad2420b7622522c5d0913196e47681a286c99e19eeeeae15c` |
+| `agx2-reference-repeat3/reference.json` | `0a1382b6a6a3b64626f4195902c3bdee325b58ff993714a4d4eb9d0693263b17` |
+
+Prediction hashes:
+
+| File | SHA-256 |
+| --- | --- |
+| `manifest.json` | `b421fcd10ecb57df7d6962aa9a5f48e264e90defc0c76a3544218d31685f783b` |
+| `prefill.json` | `bb9e800faf56b3d0d5e4d20081dd62c4638642908fbf121199d83c40ae445a47` |
+| `decode.json` | `875c78e7af420b52719b3a29d4c43332a9e53581be1681fa1f5b79e8cda3bb4b` |
+| `quality.json` | `7804c10ea01c386cc52fe9367568951715d47b1d017aa790d299837db569235c` |
+
+## Previous AGX1 compact export (explicit reproduction)
+
+Use [`latest/`](latest/) only when explicitly reproducing the previous AGX1 results.
 These are the three compact JSON files supplied by the user on 2026-11-07,
 moved from the repository root without changing their bytes. Use the older
 AGX2 sealed bundle only when explicitly reproducing historical results.
 
-## Files and row contract
+### AGX1 files and row contract
 
 Each file is a JSON array of numeric row arrays. Column order is positional:
 
@@ -33,7 +112,7 @@ only length, linearly between adjacent points for the same setting; use each
 table's own length grid. Do not extrapolate, interpolate G/f, round the source
 values or replace missing values with zero.
 
-## Source and limits
+### AGX1 source and limits
 
 The [Offline Profiler: LUT](https://app.notion.com/p/411e0acd77f88094b9bcdf5272ea776f)
 documents this compact export as of 2026-11-07: AGX1 (A1/agx30), CPython
@@ -64,7 +143,7 @@ accuracy/SLO, or inherit old AGX2 qualification. No same-source complete AGX1
 FP16 curve is supplied or extrapolated. See
 [`docs/policy-lut.md`](../../docs/policy-lut.md) for loader and provenance details.
 
-## Received-file SHA-256
+### AGX1 received-file SHA-256
 
 | File | SHA-256 |
 | --- | --- |

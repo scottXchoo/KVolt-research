@@ -49,6 +49,23 @@ class LatestFeasibilityTests(unittest.TestCase):
                          {'prefill.json', 'decode.json', 'quality.json'})
         json.dumps(report, allow_nan=False)
 
+    def test_agx2_matching_device_metadata_preserves_unvalidated_status(self):
+        report = audit.build_report(ROOT / 'data/luts/agx2-runtime-repeat5', ROOT / 'data/luts/agx2-reference-repeat3', run_policy=False)
+        self.assertEqual([r['all40']['time_feasible_count'] for r in report['lengths']],
+                         [0, 0, 0, 0, 6, 10, 11, 12])
+        self.assertEqual(report['context']['prediction_source_device'], 'agx2')
+        self.assertEqual(report['context']['target_source_device'], 'AGX2')
+        self.assertFalse(report['context']['device_mismatch'])
+        self.assertFalse(report['context']['formal_qualification'])
+        self.assertFalse(report['context']['runtime_accuracy_validated'])
+        self.assertFalse(report['context']['actual_slo_validated'])
+        provenance = report['inputs']['provenance']
+        metadata = json.loads(provenance['metadata_json'])
+        self.assertFalse(metadata['compact_manifest']['validation']['quality_runtime_eligible'])
+        self.assertEqual(metadata['compact_manifest']['context']['prefill_aggregation']['samples_per_cell'], 25)
+        self.assertEqual(provenance['manifest_sha256'],
+                         'b421fcd10ecb57df7d6962aa9a5f48e264e90defc0c76a3544218d31685f783b')
+
     def test_comparison_does_not_round_at_display_precision(self):
         target = .1
         row = DecodePrediction(1024, 8, 408, target + 1e-12, 1, Bracket(1024, 1024, 0))

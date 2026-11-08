@@ -1,4 +1,4 @@
-"""Pinned AGX1 compact predictions with explicitly supplied sealed FP16 targets."""
+"""Pinned compact predictions with explicitly supplied pinned AGX2 FP16 targets."""
 import hashlib
 import json
 from pathlib import Path
@@ -8,9 +8,44 @@ from .lut import (
     MANIFEST_SHA256 as REFERENCE_MANIFEST_SHA256, MeasuredLUTRepository,
     _TabulatedLUT, _insert, _json, _read,
 )
+from .reference import (
+    COMPACT_REFERENCE_MANIFEST_SHA256, CompactReferenceRepository, load_reference_repository,
+)
 from .types import FREQUENCIES_MHZ, LUTError, LUTProvenance, PERFORMANCE_LENGTHS, QUALITY_LENGTHS
 
 COMPACT_MANIFEST_SHA256 = '86b2343eed65432d1ee1f071fa8188a33789bdcf0309f325e689ec0bae37591a'
+AGX2_COMPACT_MANIFEST_SHA256 = 'b421fcd10ecb57df7d6962aa9a5f48e264e90defc0c76a3544218d31685f783b'
+_COMMON_CONTEXT = {
+    'model_id': 'meta-llama/Llama-3.1-8B-Instruct',
+    'model_revision': '0e9e39f249a16976918f6564b8830bc894c89659',
+    'weight_dtype': 'float16', 'kv_precision': 'K2V2', 'residual_length': 128,
+    'cpu_khz': 2201600, 'emc_hz': 3199000000, 'prefill_cache': 'original_fp16',
+    'performance_generation': {'force_length': False, 'max_new_tokens': 512},
+    'quality_generation': {'do_sample': False, 'force_length': False,
+                           'max_new_tokens': 128, 'num_beams': 1},
+    'quality_dataset': 'RULER', 'quality_metric': 'RULER_string_match_all',
+    'quality_items_per_length': 100,
+}
+# Only these exact original manifests are trusted. Context contracts also guard
+# semantic assumptions independently of the byte/hash boundary.
+_TRUSTED_COMPACT_MANIFESTS = {
+    COMPACT_MANIFEST_SHA256: {
+        **_COMMON_CONTEXT, 'performance_device_id': 'A1',
+        'decode_measurement_boundary': 't1..tN includes actual callback and initial K2V2 packing once',
+    },
+    AGX2_COMPACT_MANIFEST_SHA256: {
+        **_COMMON_CONTEXT, 'performance_device_id': 'A2',
+        'performance_repeats_per_group': 5,
+        'prefill_aggregation': {
+            'method': 'arithmetic_mean_over_all_group_request_observations',
+            'groups': list(GROUPS), 'repeats_per_group': 5, 'samples_per_cell': 25,
+            'total_requests': 1600, 'documents_per_length': 1,
+        },
+        'decode_aggregation': {'method': 'source_cell_means_preserved', 'repeats_per_cell': 5},
+        'decode_measurement_boundary': 't1..tN, includes remaining controller work and initial K2V2 packing once',
+        'quality_source_device_id': 'A1',
+    },
+}
 _TABLES = {
     'prefill': (('length', 'gpu_mhz', 'ttft_s', 'prefill_energy_j'),
                 {'length': PERFORMANCE_LENGTHS, 'gpu_mhz': FREQUENCIES_MHZ}),
@@ -26,13 +61,18 @@ _UNITS = {
 }
 
 
-def _manifest_contract(manifest):
+def _manifest_contract(manifest, expected_context):
     if (type(manifest) is not dict or manifest.get('schema') != 'kvolt.runtime-lut.v1'
             or manifest.get('units') != _UNITS
             or manifest.get('interpolation') != {'axis': 'length', 'method': 'piecewise_linear', 'extrapolation': False}):
         raise LUTError('unsupported compact LUT schema, units or interpolation')
-    if manifest['context']['performance_device_id'] != 'A1':
-        raise LUTError('compact LUT source device must be A1')
+    # JSON comparison distinguishes bools from integer measurement counts.
+    if json.dumps(manifest['context'], sort_keys=True, allow_nan=False) != json.dumps(expected_context, sort_keys=True):
+        raise LUTError('compact LUT source context does not match its trusted manifest contract')
+    validation = manifest['validation']
+    if (validation['performance_runtime_accuracy_or_SLO_validated'] is not False
+            or validation['quality_runtime_eligible'] is not False):
+        raise LUTError('compact LUT runtime accuracy/SLO and quality remain unvalidated')
     if set(manifest['tables']) != set(_TABLES):
         raise LUTError('compact manifest must describe all three tables')
     for name, (columns, axes) in _TABLES.items():
@@ -72,35 +112,49 @@ def _table(data, name, spec):
 def _target_metadata(repository):
     provenance = repository.provenance
     raw = json.loads(provenance.metadata_json)
-    return {
+    result = {
         'kind': provenance.kind, 'source_device': provenance.source_device,
         'source_commit': provenance.source_commit, 'manifest_sha256': provenance.manifest_sha256,
         'files_sha256': dict(provenance.files_sha256),
-        'source_conditions': {k: v for k, v in raw['bundle'].items() if k != 'files_sha256'},
-        'reference': raw['reference'],
     }
+    if type(repository) is CompactReferenceRepository:
+        manifest = raw['reference_manifest']
+        result.update(source_conditions=manifest['context'], reference=manifest,
+                      compact_reference_manifest=manifest)
+    else:
+        result.update(source_conditions={k: v for k, v in raw['bundle'].items() if k != 'files_sha256'},
+                      reference=raw['reference'])
+    return result
 
 
 class CompactLUTRepository(_TabulatedLUT):
-    """Load 459 AGX1 cells; keep separately supplied AGX2 FP16 targets unchanged.
+    """Load 459 pinned A1/A2 cells; keep separately supplied AGX2 FP16 targets unchanged.
 
-    Cross-device development predictions establish no accuracy, SLO or formal
+    Development predictions establish no accuracy, SLO or formal
     qualification. The source's false runtime eligibility flags remain intact.
     """
 
     def __init__(self, compact_path, *, reference_repository):
-        if (type(reference_repository) is not MeasuredLUTRepository
+        reference_pins = {
+            MeasuredLUTRepository: REFERENCE_MANIFEST_SHA256,
+            CompactReferenceRepository: COMPACT_REFERENCE_MANIFEST_SHA256,
+        }
+        expected_reference_pin = reference_pins.get(type(reference_repository))
+        if (expected_reference_pin is None
                 or reference_repository.provenance.kind != 'measured'
-                or reference_repository.provenance.manifest_sha256 != REFERENCE_MANIFEST_SHA256
+                or reference_repository.provenance.manifest_sha256 != expected_reference_pin
                 or reference_repository.provenance.source_device.casefold() != 'agx2'):
-            raise LUTError('compact LUT requires a sealed AGX2 MeasuredLUTRepository as explicit reference_repository')
+            raise LUTError('compact LUT requires a sealed AGX2 MeasuredLUTRepository or pinned '
+                           'CompactReferenceRepository as explicit reference_repository')
         root = Path(compact_path).resolve()
         data = _read(root / 'manifest.json')
-        if hashlib.sha256(data).hexdigest() != COMPACT_MANIFEST_SHA256:
+        manifest_sha256 = hashlib.sha256(data).hexdigest()
+        expected_context = _TRUSTED_COMPACT_MANIFESTS.get(manifest_sha256)
+        if expected_context is None:
             raise LUTError('unknown or modified compact manifest SHA-256')
         try:
             manifest = _json(data, 'manifest.json')
-            _manifest_contract(manifest)
+            _manifest_contract(manifest, expected_context)
             tables, hashes = {}, {}
             for name in _TABLES:
                 spec = manifest['tables'][name]
@@ -114,19 +168,22 @@ class CompactLUTRepository(_TabulatedLUT):
                     raise LUTError(f'compact LUT byte count mismatch: {spec["file"]}')
                 hashes[spec['file']] = spec['sha256']
                 tables[name] = _table(raw, name, spec)
+            source_device = {'A1': 'agx1', 'A2': 'agx2'}[manifest['context']['performance_device_id']]
+            target_device = reference_repository.provenance.source_device
+            cross_device = source_device.casefold() != target_device.casefold()
             metadata = {
                 'compact_manifest': manifest,
                 'target_repository': _target_metadata(reference_repository),
                 'target_source_device': reference_repository.provenance.source_device,
-                'cross_device_reference': True,
+                'cross_device_reference': cross_device,
             }
             provenance = LUTProvenance(
-                kind='measured', source_device='agx1', source_commit=None,
-                manifest_sha256=COMPACT_MANIFEST_SHA256, files_sha256=tuple(sorted(hashes.items())),
+                kind='measured', source_device=source_device, source_commit=None,
+                manifest_sha256=manifest_sha256, files_sha256=tuple(sorted(hashes.items())),
                 notes=(
-                    'AGX1 compact measured predictions; source runtime accuracy/SLO and quality eligibility remain unvalidated.',
-                    'Targets are explicitly supplied frozen AGX2 FP16 references, not AGX1 targets.',
-                    'Cross-device development use does not establish runtime accuracy, SLO or formal qualification.',
+                    f'{source_device.upper()} compact measured predictions; source runtime accuracy/SLO and quality eligibility remain unvalidated.',
+                    'Targets are explicitly supplied pinned AGX2 FP16 references, separate from compact predictions.',
+                    'Development use, including matching devices, does not establish runtime accuracy, SLO or formal qualification.',
                 ),
                 metadata_json=json.dumps(metadata, sort_keys=True, allow_nan=False),
             )
@@ -151,8 +208,8 @@ def load_lut_repository(path, *, reference_lut_dir=None):
         raise LUTError('ambiguous LUT directory contains sealed and compact formats')
     if compact:
         if reference_lut_dir is None:
-            raise LUTError('compact LUT requires explicit --reference-lut-dir with sealed AGX2 FP16 targets')
-        reference = MeasuredLUTRepository(reference_lut_dir)
+            raise LUTError('compact LUT requires explicit --reference-lut-dir with pinned AGX2 FP16 targets')
+        reference = load_reference_repository(reference_lut_dir)
         return CompactLUTRepository(root, reference_repository=reference)
     if sealed:
         if reference_lut_dir is not None:

@@ -52,6 +52,40 @@ def value_sha256(value):
     return hashlib.sha256(canonical_json(value).encode('utf-8')).hexdigest()
 
 
+def _lut_binding(provenance):
+    """Bind separate compact targets without changing historical sealed IDs."""
+    from ..policy.compact import COMPACT_MANIFEST_SHA256, AGX2_COMPACT_MANIFEST_SHA256
+    result = {'kind': provenance.kind, 'source_device': provenance.source_device,
+              'source_commit': provenance.source_commit,
+              'manifest_sha256': provenance.manifest_sha256,
+              'files_sha256': dict(provenance.files_sha256)}
+    metadata = strict_json(provenance.metadata_json)
+    if type(metadata) is not dict:
+        raise ContractError('qualification LUT metadata must be an object')
+    known_compact = provenance.manifest_sha256 in (COMPACT_MANIFEST_SHA256, AGX2_COMPACT_MANIFEST_SHA256)
+    if not known_compact and 'target_repository' not in metadata:
+        return result
+    target = metadata.get('target_repository')
+    fields = ('kind', 'source_device', 'source_commit', 'manifest_sha256', 'files_sha256')
+    if type(target) is not dict or not set(fields).issubset(target):
+        raise ContractError('qualification compact LUT requires complete target identity')
+
+    def digest(value):
+        return type(value) is str and len(value) == 64 and all(c in '0123456789abcdef' for c in value)
+
+    files = target['files_sha256']
+    if (target['kind'] != 'measured' or type(target['source_device']) is not str
+            or target['source_device'].casefold() != 'agx2'
+            or (target['source_commit'] is not None
+                and (type(target['source_commit']) is not str or not target['source_commit']))
+            or not digest(target['manifest_sha256'])
+            or type(files) is not dict or not files
+            or any(type(name) is not str or not name or not digest(value) for name, value in files.items())):
+        raise ContractError('qualification compact LUT target identity is invalid')
+    result['reference'] = {field: target[field] for field in fields}
+    return result
+
+
 def qualification_binding(*, repo, device_profile, power_profile, native_profile, runtime):
     """Read identifiers without GPU/scientific imports or any device mutation.
 
@@ -85,10 +119,7 @@ def qualification_binding(*, repo, device_profile, power_profile, native_profile
                             for key, (module, sha) in native_build_hashes(native_profile).items()},
         'backend_versions': dict(VERSIONS), 'backend_sources': dict(SOURCE_HASHES),
         'model_snapshot': SNAPSHOT, 'model_files': dict(MODEL_FILES),
-        'lut': {'kind': repo.provenance.kind, 'source_device': repo.provenance.source_device,
-                'source_commit': repo.provenance.source_commit,
-                'manifest_sha256': repo.provenance.manifest_sha256,
-                'files_sha256': dict(repo.provenance.files_sha256)},
+        'lut': _lut_binding(repo.provenance),
         'identity': {'physical_id_sha256': identity, 'boot_id': boot},
         'device_profile': device_profile.as_dict(), 'power_profile': power_profile.to_dict(),
     }

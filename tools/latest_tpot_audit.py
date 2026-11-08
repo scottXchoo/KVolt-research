@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CPU audit of latest AGX1 predictions against an explicit FP16 target source.
+"""CPU audit of pinned compact predictions against an explicit FP16 target source.
 
 No device is controlled. Fixed clocks are scenario assumptions, never measured
 controller costs. Policy execution uses the real PC/DC and pinned Knee adapter;
@@ -25,7 +25,7 @@ def load_repository(latest_dir, reference_lut_dir):
     from kvolt_runtime.policy.compact import CompactLUTRepository, load_lut_repository
     repo = load_lut_repository(latest_dir, reference_lut_dir=reference_lut_dir)
     if not isinstance(repo, CompactLUTRepository):
-        raise ValueError('--latest-dir must contain the pinned latest AGX1 compact LUT')
+        raise ValueError('--latest-dir must contain the pinned A1 or A2 compact LUT')
     return repo
 
 
@@ -111,9 +111,9 @@ def build_report(latest_dir, reference_lut_dir, *, elapsed_ns=DEFAULT_ELAPSED_NS
             'context': {'purpose': 'development crossover feasibility audit',
                         'prediction_source_device': repo.provenance.source_device,
                         'target_source_device': metadata.get('target_source_device', target.get('source_device')),
-                        'device_mismatch': True, 'formal_qualification': False,
+                        'device_mismatch': metadata['cross_device_reference'], 'formal_qualification': False,
                         'runtime_accuracy_validated': False, 'actual_slo_validated': False,
-                        'target_policy': 'unchanged explicit AGX2 FP16 R_d; no AGX1 substitution',
+                        'target_policy': 'unchanged explicit pinned AGX2 FP16 R_d; separate from compact predictions',
                         'comparison': 'unrounded binary64 <=; displayed units do not affect comparisons'},
             'inputs': {'latest_dir': str(latest), 'reference_lut_dir': str(reference),
                        'latest_files_sha256': {name: hashlib.sha256((latest / name).read_bytes()).hexdigest()
