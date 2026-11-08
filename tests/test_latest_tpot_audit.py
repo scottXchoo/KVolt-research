@@ -1,5 +1,5 @@
 """Feasibility arithmetic and policy-scope checks, without GPU dependencies."""
-from dataclasses import replace
+from dataclasses import asdict, fields, make_dataclass, replace
 import json
 import os
 from pathlib import Path
@@ -30,6 +30,82 @@ class LatestFeasibilityTests(unittest.TestCase):
             # An explicit reference is required evidence, never an optional skip.
             # Validate bytes before the dependency-based real-policy skip too.
             audit.load_repository(LATEST, REFERENCE)
+
+    def assert_sparse_source_evidence(self, row, full):
+        dc = row['decode']
+        source = [asdict(prediction) for prediction in full]
+        if dc['knee']['status'] == 'found':
+            active = set(dc['knee']['groups'])
+        elif dc['knee']['status'] == 'not_found':
+            active = {32}
+        else:
+            active = {8, 16, 32, 64, 128}
+        passing = [p for p in source if p['group'] in active and p['tpot_s'] <= dc['budget_s']]
+        fastest = min(p['tpot_s'] for p in source)
+        expected = passing or [p for p in source if p['tpot_s'] == fastest]
+        self.assertEqual([c['prediction'] for c in dc['candidates']], expected)
+        self.assertEqual(dc['all40_time_feasible_count'], sum(p['tpot_s'] <= dc['budget_s'] for p in source))
+        self.assertEqual(dc['knee_active_count'], sum(p['group'] in active for p in source))
+        self.assertEqual(dc['knee_active_time_feasible_count'], len(passing))
+        self.assertEqual(sum(c['selected'] for c in dc['candidates']), 1)
+        self.assertEqual([c['prediction'] for c in dc['candidates'] if c['selected']], [dc['selected']])
+        for candidate in dc['candidates']:
+            prediction = candidate['prediction']
+            self.assertEqual(candidate['active_knee'], prediction['group'] in active)
+            self.assertEqual(candidate['meets_budget'], prediction['tpot_s'] <= dc['budget_s'])
+            self.assertEqual(candidate['eligible'], prediction in passing)
+
+    def test_sparse_counts_cover_original_active_grid_in_all_knee_states(self):
+        from kvolt_runtime.policy.mock import MockLUTRepository
+        from kvolt_runtime.policy.types import PERFORMANCE_LENGTHS
+        class Knee:
+            def __init__(self, result): self.result = result
+            def detect(self, rows): return self.result
+        for knee in (KneeResult('found', (8,)), KneeResult('not_found', reason='flat_quality'),
+                     KneeResult('error_recovered', reason='detector_error')):
+            for target in (100.0, .0001):
+                with self.subTest(knee=knee.status, target=target):
+                    repo = MockLUTRepository(decode_target={n: target for n in PERFORMANCE_LENGTHS})
+                    original = repo.decode
+                    with patch.object(repo, 'decode', wraps=original) as full_query:
+                        result = audit.policy_scenarios(repo, (0,), (512,), knee_adapter=Knee(knee))
+                    self.assertEqual(full_query.call_count, 8)
+                    for row in result:
+                        self.assert_sparse_source_evidence(row, original(row['length']))
+
+    def test_legacy_full_trace_counts_keep_recorded_active_groups(self):
+        from kvolt_runtime.policy.decode import DecodeController
+        from kvolt_runtime.policy.mock import MockLUTRepository
+        from kvolt_runtime.policy.types import PERFORMANCE_LENGTHS
+        repo = MockLUTRepository(decode_target={n: 100.0 for n in PERFORMANCE_LENGTHS})
+        class Knee:
+            def detect(self, rows): return KneeResult('not_found', reason='flat_quality')
+        class LegacyController:
+            def __init__(self, repo, knee_adapter, clock):
+                self.controller = DecodeController(repo, knee_adapter=knee_adapter, clock=clock)
+            def choose(self, length, *args):
+                current = self.controller.choose(length, *args)
+                full = repo.decode(length)
+                scores = {q.group: q.score for q in current.quality}
+                selected = min(full, key=lambda p: (p.energy_j_per_token, -scores[p.group], p.tpot_s, p.group, p.frequency_mhz))
+                # Historical normal no-knee control used all G and recorded all40.
+                candidates = tuple(replace(current.candidates[0], prediction=p, quality=scores[p.group],
+                    active_knee=True, meets_budget=True, eligible=True, selected=p == selected,
+                    reasons=() if p == selected else ('not_selected',)) for p in full)
+                names = [f.name for f in fields(current) if f.name != 'selection_rule']
+                legacy = make_dataclass('LegacyDecodeDecision', [(name, object) for name in names])
+                values = {name: getattr(current, name) for name in names}
+                values.update(candidates=candidates, selected=selected, selected_quality=scores[selected.group])
+                return legacy(**values)
+        with patch('kvolt_runtime.policy.decode.DecodeController', LegacyController):
+            rows = audit.policy_scenarios(repo, (0,), (512,), knee_adapter=Knee())
+        for row in rows:
+            dc = row['decode']
+            self.assertNotIn('selection_rule', dc)
+            self.assertEqual(len(dc['candidates']), 40)
+            self.assertEqual(dc['all40_time_feasible_count'], 40)
+            self.assertEqual(dc['knee_active_count'], 40)
+            self.assertEqual(dc['knee_active_time_feasible_count'], 40)
 
     def test_complete_latest_grid_against_unchanged_targets(self):
         if not REFERENCE.is_dir():
@@ -84,6 +160,8 @@ class LatestFeasibilityTests(unittest.TestCase):
         long = next(r for r in result if r['length'] == 7168 and r['nmax'] == 512 and r['assumed_elapsed_ns'] == 0)
         self.assertEqual(long['decode']['all40_time_feasible_count'], 11)
         self.assertEqual(long['decode']['knee_active_time_feasible_count'], 0)
+        self.assertEqual(long['decode']['knee_active_count'], 8)
+        self.assert_sparse_source_evidence(long, repo.decode(long['length']))
         self.assertEqual(long['decode']['knee']['groups'], [8])
         self.assertEqual(long['decode']['selection_path'], 'latency_fallback')
         # Fallback searches all40: feasibility can be true despite empty Knee candidates.
@@ -117,9 +195,11 @@ class LatestFeasibilityTests(unittest.TestCase):
         report = audit.build_report(LATEST, REFERENCE)
         self.assertEqual(report['policy_execution']['status'], 'completed')
         self.assertEqual(len(report['policy_scenarios']), 48)
+        repo = audit.load_repository(LATEST, REFERENCE)
+        full = {length: repo.decode(length) for length in audit.LENGTHS}
         for row in report['policy_scenarios']:
             dc = row['decode']
-            self.assertEqual(len(dc['candidates']), 40)
+            self.assert_sparse_source_evidence(row, full[row['length']])
             self.assertEqual(dc['predicted_feasible'], dc['selected']['tpot_s'] <= dc['budget_s'])
             self.assertEqual(dc['elapsed_ns'], row['assumed_elapsed_ns'])
 

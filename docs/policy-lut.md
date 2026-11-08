@@ -78,6 +78,21 @@ is validated at construction. `preflight(L)` validates integer length support
 without calling online lookup, interpolation or detection. Full support is
 required even when a later controller skips Decode for Nmax=1 or first EOS.
 
+Online PC follows Runner `t0_ns` → `prefill_target(L)` → immediate `tp_ns`
+→ `budget_s=target_s-(tp_ns-t0_ns)/1_000_000_000`
+→ `prefill_within_budget(L,budget_s)` → minimum raw energy selection.
+Integer ns subtraction precedes conversion to seconds. The signed finite budget
+may be zero or negative and is fixed before candidate lookup. The query returns
+`PrefillBudgetLookup(length,predictions,budget_s,bracket)` with all
+`ttft_s <= budget_s` full rows or all exact global minimum-TTFT ties when none
+pass. PC records `lookup_end_ns` after validation without reducing the budget
+again. `prefilter_ns` aliases the earlier `tp_ns` boundary.
+
+Energy is interpolated only for returned rows. Tables validated as
+nonincreasing in TTFT across frequency at every knot use binary boundary search;
+valid nonmonotonic tables use exact scanning. TTFT probes are reused within the
+query. Full source support remains mandatory before the measured phase.
+
 Online DC queries `quality(L)` and Knee first, then `decode_target(L)`, records
 td and computes Bd before calling `decode_within_budget(L, groups, budget_s)`.
 The latter accepts finite signed budgets and a nonempty tuple of unique
@@ -90,8 +105,20 @@ source-grid constructor/preflight validation remains mandatory. No G/f
 interpolation, extrapolation, approximate boundary or missing-value substitution
 is introduced. See [DC order and budget](policy-decode.md).
 
-Online methods are `prefill(L)`, `quality(L)`, `decode(L)`, `prefill_target(L)`
-and `decode_target(L)`. Predictions are immutable and retain the request length,
+Compatibility `prefill_within_target(L,target_s)` keeps its positive-target
+`PrefillLookup` contract; it is separate from the current signed-budget query.
+Other compatibility methods `decode_lookup(L)`,
+`prefill_lookup(L, latency_only=False)`, `prefill(L)`,
+`decode(L)`, `prefill_target(L)`, `decode_target(L)` and `prefill_latencies(L)`
+retain their existing results. The combined Prefill lookup defaults to all eight
+full predictions; latency-only mode returns all eight TTFTs without energy.
+`prefill_candidates(L, frequencies)` returns details for the requested immutable
+tuple of unique original frequencies, sorted by frequency; an empty tuple returns
+no rows. `prefill(L)` retains its full-eight-row contract for offline consumers
+and source-backed audits. All measured, compact and mock repositories share
+these methods. See [PC order and budgets](policy-prefill.md) for current
+selection, sparse trace and historical audit semantics. Predictions are
+immutable and retain the request length,
 original candidate and `Bracket(lower, upper, weight)`. Exact knots return the
 original Python binary64 value directly; intermediate values use
 `(1 - weight) * lower_value + weight * upper_value`. Only length is interpolated.

@@ -188,6 +188,76 @@ def close_energy(actual, exact):
     require(abs(actual-expected) <= max(1e-10, abs(expected)*1e-12), 'independent energy mismatch')
 
 
+def _audit_sparse_prefill(pc, timing, request, candidates, repository):
+    """Check sparse PC evidence; a repository proves candidate completeness."""
+    require(type(pc.get('candidates')) is list and bool(candidates)
+            and all(type(row) is dict for row in candidates), 'prefill candidate coverage')
+    require(all(type(row.get('frequency_mhz')) is int and row['frequency_mhz'] in FREQUENCIES
+                for row in candidates)
+            and [row['frequency_mhz'] for row in candidates] == sorted({row['frequency_mhz'] for row in candidates}),
+            'prefill candidate coverage')
+    require(type(pc.get('target_s')) in (int, float) and math.isfinite(pc['target_s'])
+            and pc['target_s'] > 0
+            and type(pc.get('budget_s')) in (int, float) and math.isfinite(pc['budget_s']), 'PC target/budget')
+    require(all(type(pc.get(field)) is int for field in ('prefilter_ns', 'tp_ns', 'elapsed_ns', 't0_ns'))
+            and type(timing['t0_ns']) is int
+            and pc['t0_ns'] == timing['t0_ns']
+            and 0 <= timing['t0_ns'] <= pc['prefilter_ns'] <= pc['tp_ns']
+            and pc['elapsed_ns'] == pc['tp_ns']-timing['t0_ns'], 'PC screening clock boundary')
+    if pc['selection_rule'] == 'reference_budget':
+        require(pc['prefilter_ns'] == pc['tp_ns']
+                and type(pc.get('lookup_end_ns')) is int and pc['tp_ns'] <= pc['lookup_end_ns'],
+                'PC Reference/lookup clock boundary')
+        require(pc['budget_s'] == pc['target_s']-pc['elapsed_ns']/1e9, 'PC Reference budget')
+    else:
+        require(pc['budget_s'] == pc['target_s'], 'PC target budget')
+    brackets = []
+    for row in candidates:
+        require(set(row) == {'length', 'frequency_mhz', 'ttft_s', 'energy_j', 'bracket'}
+                and type(row['length']) is int and row['length'] == request['length'], 'invalid Prefill prediction')
+        require(type(row['ttft_s']) in (int, float) and math.isfinite(row['ttft_s']) and row['ttft_s'] > 0
+                and type(row['energy_j']) in (int, float) and math.isfinite(row['energy_j'])
+                and row['energy_j'] >= 0, 'queried Prefill metrics missing or invalid')
+        bracket = row['bracket']
+        require(type(bracket) is dict and set(bracket) == {'lower', 'upper', 'weight'}, 'invalid Prefill bracket')
+        lo, hi, weight = bracket['lower'], bracket['upper'], bracket['weight']
+        require(type(lo) is int and type(hi) is int and lo in range(1024, 8193, 1024)
+                and hi in range(1024, 8193, 1024) and lo <= row['length'] <= hi
+                and type(weight) in (int, float) and math.isfinite(weight)
+                and weight == (0.0 if lo == hi else (row['length']-lo)/(hi-lo)), 'invalid Prefill bracket')
+        brackets.append(bracket)
+    require(all(bracket == brackets[0] for bracket in brackets), 'Prefill bracket mismatch')
+    active = [row for row in candidates if row['ttft_s'] <= pc['budget_s']]
+    require(len(active) == len(candidates) if active else len({row['ttft_s'] for row in candidates}) == 1,
+            'Prefill target lookup candidate evidence')
+    # Without the sealed repository, only internal consistency can be checked.
+    # Omitted passing rows or omitted global fastest ties require source evidence.
+    if repository is not None:
+        full = [asdict(row) for row in repository.prefill(request['length'])]
+        expected = [row for row in full if row['ttft_s'] <= pc['budget_s']]
+        if not expected:
+            fastest = min(row['ttft_s'] for row in full)
+            expected = [row for row in full if row['ttft_s'] == fastest]
+        require(canonical_json(candidates) == canonical_json(expected)
+                and pc['target_s'] == repository.prefill_target(request['length']),
+                'Prefill predictions/target differ from sealed LUT')
+    require(type(pc.get('selected')) is dict
+            and canonical_json(pc['selected']) in {canonical_json(row) for row in candidates},
+            'PC selected prediction evidence')
+    require(type(pc.get('predicted_feasible')) is bool and pc['predicted_feasible'] == bool(active),
+            'PC predicted feasibility')
+    require(sum(record.get('selected') is True for record in pc['candidates']) == 1, 'PC selected candidate evidence')
+    for record in pc['candidates']:
+        selected = record['prediction'] == pc['selected']
+        reasons = ([] if active else ['time_budget_exceeded'])
+        reasons += ([] if selected else ['not_selected'])
+        if selected and not active:
+            reasons.append('latency_fallback')
+        require(type(record.get('meets_budget')) is bool and record['meets_budget'] == bool(active)
+                and type(record.get('selected')) is bool and record['selected'] == selected
+                and record.get('reasons') == reasons, 'PC candidate flags/reasons')
+
+
 def _audit_budget_decode(dc, request, candidates, groups, quality, repository):
     """Check returned Decode details; source evidence proves the complete set."""
     require(type(dc.get('candidates')) is list and 1 <= len(candidates) <= 40
@@ -257,22 +327,65 @@ def audit_policy(result, repository=None):
     pc, dc = result['decisions']['prefill'], result['decisions']['decode']
     timing, request = result['timing'], result['request']
     require('selection_rule' not in dc or dc['selection_rule'] == 'budget_filtered_decode', 'unknown DC selection rule')
+    require('selection_rule' not in pc or pc['selection_rule'] in ('target_ttft', 'reference_budget'), 'unknown PC selection rule')
+    if pc.get('selection_rule') in ('target_ttft', 'reference_budget'):
+        require(type(pc.get('candidates')) is list
+                and all(type(record) is dict and type(record.get('prediction')) is dict
+                        and 'length' in record['prediction'] for record in pc['candidates']),
+                'invalid Prefill candidate evidence')
     candidates = [row['prediction'] for row in pc['candidates']]
     require(all(row['length'] == request['length'] for row in candidates), 'Prefill LUT length mismatch')
-    require(len(candidates) == 8 and {row['frequency_mhz'] for row in candidates} == FREQUENCIES,
-            'prefill candidate coverage')
-    require(pc['elapsed_ns'] == pc['tp_ns']-timing['t0_ns'], 'PC elapsed boundary')
-    require(pc['budget_s'] == pc['target_s']-pc['elapsed_ns']/1e9, 'PC budget')
-    if repository is not None:
-        require(canonical_json(candidates) == canonical_json([asdict(row) for row in repository.prefill(request['length'])])
-                and pc['target_s'] == repository.prefill_target(request['length']), 'Prefill predictions/target differ from sealed LUT')
+    if pc.get('selection_rule') in ('target_ttft', 'reference_budget'):
+        _audit_sparse_prefill(pc, timing, request, candidates, repository)
+    else:
+        require(len(candidates) == 8 and {row['frequency_mhz'] for row in candidates} == FREQUENCIES,
+                'prefill candidate coverage')
+        require(pc['elapsed_ns'] == pc['tp_ns']-timing['t0_ns'], 'PC elapsed boundary')
+        require(pc['budget_s'] == pc['target_s']-pc['elapsed_ns']/1e9, 'PC budget')
+        partial_lookup = 'prefilter_ns' in pc
+        if partial_lookup:
+            require(all(type(pc[field]) is int for field in ('prefilter_ns', 'tp_ns'))
+                    and type(timing['t0_ns']) is int
+                    and 0 <= timing['t0_ns'] <= pc['prefilter_ns'] <= pc['tp_ns'],
+                    'PC screening clock boundary')
+            require(all(type(row['ttft_s']) in (int, float) and math.isfinite(row['ttft_s'])
+                        and row['ttft_s'] > 0 for row in candidates), 'invalid Prefill screening time')
+            screening_budget = pc['target_s']-(pc['prefilter_ns']-timing['t0_ns'])/1e9
+            screened = [row for row in candidates if row['ttft_s'] <= screening_budget]
+            fastest = min(row['ttft_s'] for row in candidates)
+            lookup_rows = screened or [row for row in candidates if row['ttft_s'] == fastest]
+            queried = {row['frequency_mhz'] for row in lookup_rows}
+            for row in candidates:
+                require('energy_j' in row, 'Prefill energy lookup evidence missing')
+                if row['frequency_mhz'] in queried:
+                    require(type(row['energy_j']) in (int, float) and math.isfinite(row['energy_j'])
+                            and row['energy_j'] >= 0, 'queried Prefill energy missing or invalid')
+                else:
+                    require(row['energy_j'] is None, 'screened-out Prefill energy was queried')
+        else:
+            require(all(type(row.get('energy_j')) in (int, float) and math.isfinite(row['energy_j'])
+                        and row['energy_j'] >= 0 for row in candidates),
+                    'legacy Prefill records require full energy evidence')
+        if repository is not None:
+            expected = [asdict(row) for row in repository.prefill(request['length'])]
+            if partial_lookup:
+                for row in expected:
+                    if row['frequency_mhz'] not in queried:
+                        row['energy_j'] = None
+            require(canonical_json(candidates) == canonical_json(expected)
+                    and pc['target_s'] == repository.prefill_target(request['length']), 'Prefill predictions/target differ from sealed LUT')
     active = [row for row in candidates if row['ttft_s'] <= pc['budget_s']]
+    # The fastest TTFT ties are queried even when no row passes screening.
+    # Avoid comparing the null energies of all other latency-only records.
+    fastest = min(row['ttft_s'] for row in candidates)
+    fallback = [row for row in candidates if row['ttft_s'] == fastest]
     key = (lambda row: (row['energy_j'], row['ttft_s'], row['frequency_mhz'])) if active else (
         lambda row: (row['ttft_s'], row['energy_j'], row['frequency_mhz']))
-    require(pc['selected'] == min(active or candidates, key=key), 'PC raw-energy/tie selection')
+    require(pc['selected'] == min(active or fallback, key=key), 'PC raw-energy/tie selection')
     require(pc['selection_path'] == ('energy_min' if active else 'latency_fallback'), 'PC branch')
     prefill_receipt = result['device']['prefill']
-    require(pc['tp_ns'] <= prefill_receipt['start_ns'] <= prefill_receipt['end_ns'] < timing['t1_ns'],
+    apply_after = pc['lookup_end_ns'] if pc.get('selection_rule') == 'reference_budget' else pc['tp_ns']
+    require(apply_after <= prefill_receipt['start_ns'] <= prefill_receipt['end_ns'] < timing['t1_ns'],
             'prefill clock application outside measured PC/Prefill interval')
     if len(result['generation']['token_ids']) == 1:
         require(dc['status'] == 'skipped' and dc['selected'] is None and not dc['candidates'], 'DC skip')

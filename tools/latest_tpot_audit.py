@@ -54,6 +54,20 @@ def validate_scenarios(elapsed_ns, nmax_values):
         raise ValueError('duplicate scenario values are unsupported')
 
 
+def _active_decode_groups(decision, full_predictions):
+    """Recover the original active domain, including groups absent from sparse rows."""
+    if getattr(decision, 'selection_rule', None) == 'budget_filtered_decode':
+        groups = sorted({row.group for row in full_predictions})
+        if decision.knee.status == 'found':
+            return set(decision.knee.groups)
+        if decision.knee.status == 'not_found':
+            return {groups[len(groups) // 2]}
+        return set(groups)
+    # Historical full-grid controllers already recorded every group's activity.
+    # Honor their flags, including the earlier all-G normal no-knee policy.
+    return {candidate.prediction.group for candidate in decision.candidates if candidate.active_knee}
+
+
 def policy_scenarios(repo, elapsed_ns=DEFAULT_ELAPSED_NS, nmax_values=DEFAULT_NMAX, *, knee_adapter=None):
     from kvolt_runtime.policy.decode import DecodeController
     from kvolt_runtime.policy.prefill import PrefillController
@@ -63,6 +77,8 @@ def policy_scenarios(repo, elapsed_ns=DEFAULT_ELAPSED_NS, nmax_values=DEFAULT_NM
     origin = 1_000_000_000
     for length in LENGTHS:
         repo.preflight(length)
+        # Offline aggregation source only; controller lookup and trace stay sparse.
+        full_decode = repo.decode(length)
         for elapsed in elapsed_ns:
             clock = lambda: origin + elapsed
             pc = PrefillController(repo, clock=clock).choose(length, origin)
@@ -71,9 +87,11 @@ def policy_scenarios(repo, elapsed_ns=DEFAULT_ELAPSED_NS, nmax_values=DEFAULT_NM
                 prefill, decode = asdict(pc), asdict(dc)
                 prefill.update(selected_margin_ms=(pc.budget_s - pc.selected.ttft_s) * 1000,
                                time_feasible_count=sum(c.meets_budget for c in pc.candidates))
-                decode.update(all40_time_feasible_count=sum(c.meets_budget for c in dc.candidates),
-                              knee_active_count=sum(c.active_knee for c in dc.candidates),
-                              knee_active_time_feasible_count=sum(c.eligible for c in dc.candidates),
+                active_groups = _active_decode_groups(dc, full_decode)
+                decode.update(all40_time_feasible_count=sum(p.tpot_s <= dc.budget_s for p in full_decode),
+                              knee_active_count=sum(p.group in active_groups for p in full_decode),
+                              knee_active_time_feasible_count=sum(
+                                  p.group in active_groups and p.tpot_s <= dc.budget_s for p in full_decode),
                               selected_margin_ms=(dc.budget_s - dc.selected.tpot_s) * 1000,
                               selected_target_margin_ms=(dc.target_s - dc.selected.tpot_s) * 1000)
                 # JSON round trip gives lists consistently to library and CLI users.

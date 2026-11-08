@@ -176,6 +176,13 @@ def test_sequential_resident_model_fresh_cache_and_phase_order(tmp_path):
         assert timing['t0_ns'] < timing['tp_ns'] < timing['t1_ns'] <= timing['td_ns'] < timing['tN_ns']
         assert timing['ttft_s'] == (timing['t1_ns'] - timing['t0_ns']) / 1e9
         assert timing['mean_tpot_s'] == (timing['tN_ns'] - timing['t1_ns']) / 2e9
+        pc = result['decisions']['prefill']
+        assert pc['selection_rule'] == 'reference_budget'
+        assert pc['tp_ns'] == pc['prefilter_ns'] == timing['tp_ns'] == timing['t0_ns'] + 1_000_000
+        assert pc['lookup_end_ns'] == pc['tp_ns'] + 1_000_000
+        assert pc['lookup_end_ns'] <= result['device']['prefill']['start_ns']
+        assert pc['budget_s'] == 0.999 and pc['selected']['frequency_mhz'] == 510
+        assert [c['prediction']['frequency_mhz'] for c in pc['candidates']] == [510, 612, 714, 816, 918, 1020, 1122]
         assert timing['tN_ns'] < result['cleanup_started_ns'] < result['cleanup_ended_ns']
         assert result['energy']['status'] == 'not_collected'
     saved = json.loads((tmp_path / 'out/session.json').read_text())
@@ -214,7 +221,7 @@ def test_decision_serialization_follows_final_token_without_changing_measurement
     assert [name for name, _, _ in serialized] == ['PrefillDecision', 'DecodeDecision']
     assert all(time >= result['timing']['tN_ns'] and n == 2 for _, time, n in serialized)
     assert result['timing']['ttft_s'] < 1 and result['timing']['mean_tpot_s'] < 1
-    assert len(result['decisions']['prefill']['candidates']) == 8
+    assert len(result['decisions']['prefill']['candidates']) == 7
     # Recovery activates all G, but only 33 combinations meet this budget.
     assert len(result['decisions']['decode']['candidates']) == 33
     assert all(row['eligible'] for row in result['decisions']['decode']['candidates'])
@@ -228,7 +235,7 @@ def test_failed_generation_preserves_selected_decisions_and_stage_bounds(tmp_pat
     session = runner.run(prepared, options)
     result = session['results'][0]
     assert session['exit_code'] == 1 and result['generation']['status'] == 'failed'
-    assert len(result['decisions']['prefill']['candidates']) == 8
+    assert len(result['decisions']['prefill']['candidates']) == 7
     dc = result['decisions']['decode']
     stages = result['generation']['stage_timing']
     if failure == 'prefill':
@@ -323,7 +330,7 @@ def test_signal_stops_after_current_forward_preserves_prefix(tmp_path, stop_at, 
     assert first['generation']['status'] == 'interrupted' and first['generation']['n_output_tokens'] == n
     assert first['timing']['valid'] is False and first['timing']['prefix']['ttft_s'] is not None
     assert first['timing']['ttft_s'] is None and first['cleanup']['status'] == 'completed'
-    assert len(first['decisions']['prefill']['candidates']) == 8
+    assert len(first['decisions']['prefill']['candidates']) == 7
     stages = first['generation']['stage_timing']
     if stop_at == 'prefill':
         assert first['decisions']['decode'] is None

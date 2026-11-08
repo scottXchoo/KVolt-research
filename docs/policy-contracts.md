@@ -4,16 +4,30 @@
 SciPy, kneed, torch or a GPU model. Existing M1 contracts and arithmetic remain
 unchanged. Python float is binary64; selection compares the full values directly.
 
-`LUTRepository` provides `prefill`, `quality`, `decode`, `prefill_target`,
-`decode_target`, and `decode_within_budget(L, groups, budget_s)` methods. `preflight(L)` checks full support
+`LUTRepository` provides combined `prefill_lookup(L, latency_only=False)` and
+`decode_lookup(L)` methods. Frozen `PrefillLookup` and `DecodeLookup` contain
+`length`, immutable `predictions`, positive finite `target_s` and a shared
+`bracket`. Predictions and Reference target reuse one performance-length bracket
+calculation. Separate `prefill`, `prefill_latencies`, `prefill_candidates`,
+`quality`, `decode`, `prefill_target`, and `decode_target` remain available for
+compatibility. `preflight(L)` checks full support
 without calling those online interpolation methods. All immutable predictions
 carry L, original candidate identifiers and a containing interpolation bracket.
 Quality uses raw RULER mean_score in [0,1], never retention q. The raw metadata
 and source pins are retained in `LUTProvenance`; an adapter may not turn
 runtime_eligible=false into a declaration of formal Runtime qualification.
 
-PC calls Prefill lookup and the Prefill target before reading its injected
-integer-nanosecond clock. DC checks Nmax/first-EOS before lookup, then performs Quality lookup, Knee
+PC receives Runner's `t0_ns`, queries `prefill_target(L)` and validates the
+positive finite Reference target. It immediately reads `tp_ns`, computes
+`elapsed_ns=tp_ns-t0_ns` using integer subtraction, and fixes
+`budget_s=target_s-elapsed_ns/1_000_000_000`. `prefill_within_budget(L,budget_s)`
+returns `PrefillBudgetLookup(length,predictions,budget_s,bracket)` with all
+`ttft_s <= budget_s` full rows or all exact global fastest ties if none pass.
+Finite zero/negative budgets are valid. After validation PC records
+`lookup_end_ns`; it does not subtract lookup time again. Both clocks must be
+nondecreasing. `prefilter_ns` equals `tp_ns` as a compatibility alias. This
+2026-11-08 corrected user rule replaces the intermediate direct-target policy.
+DC checks Nmax/first-EOS before lookup, then performs Quality lookup, Knee
 selection and active G determination, `decode_target(L)` Reference lookup and
 positive finite target validation, td clock and Bd calculation, then
 `decode_within_budget(L, groups, budget_s)`. This 2026-11-08 user revision moves
@@ -32,11 +46,20 @@ Clock subtraction happens as integers before conversion to seconds. A clock
 moving backwards is a contract error, not a Knee recovery.
 
 Controllers return frozen decisions with candidate eligibility, selection and
-reasons. DC records `selection_rule="budget_filtered_decode"` and only returned
-detail rows (1..40). Unmarked historical full-40 traces retain legacy auditing.
-With a repository, the auditor independently checks the full grid for exact
-returned-set completeness, global fastest ties and the selected argmin; without
-source evidence it checks internal consistency. Unknown rule markers are rejected.
+reasons. PC records `selection_rule="reference_budget"` and only queried full
+`PrefillPrediction` rows; it does not emit latency-only placeholders. DC records
+`selection_rule="budget_filtered_decode"` and only returned detail rows (1..40).
+Legacy unmarked full-40 Decode traces retain historical audit semantics.
+The auditor validates PC's fixed Reference-time budget and requires device
+application after `lookup_end_ns`. It checks exact sparse PC/DC sets against a
+repository when available; without source evidence it checks only internal
+consistency. For DC it independently evaluates the full source grid, proving
+eligible-set completeness or global fastest ties and the selected argmin outside
+online control. Historical PC `target_ttft` traces retain budget equal to target;
+unmarked PC traces retain full/partial-energy post-lookup budget auditing.
+Unknown rule markers are rejected. The positive-target `prefill_within_target`
+API remains compatible.
+Missing source cells still fail full support validation before PC entry.
 PC and DC do not write files or device settings. CLI
 diagnosis injects assumed times and marks them synthetic; later M3 passes the
 same host monotonic clock used by the Backend. There is no request-result cache

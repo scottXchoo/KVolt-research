@@ -9,9 +9,10 @@ from types import MappingProxyType
 from ..config import GROUPS
 from ..errors import ContractError
 from .types import (
-    Bracket, DecodePrediction, FREQUENCIES_MHZ, LUTError, LUTProvenance,
-    PERFORMANCE_LENGTHS, PrefillPrediction, QUALITY_LENGTHS, QualityPrediction,
-    finite, group as validate_group, length as validate_length,
+    Bracket, DecodeLookup, DecodePrediction, FREQUENCIES_MHZ, LUTError, LUTProvenance,
+    PERFORMANCE_LENGTHS, PrefillBudgetLookup, PrefillLatencyPrediction, PrefillLookup, PrefillPrediction,
+    QUALITY_LENGTHS, QualityPrediction,
+    finite, frequency, group as validate_group, length as validate_length,
 )
 
 SOURCE_COMMIT = 'd6cf87a60984aa167c5b5d72de354fd3d587c2d5'
@@ -53,6 +54,12 @@ class _TabulatedLUT:
         for name, values in [('Prefill target', prefill_target), ('Decode target', decode_target)]:
             _grid_keys(values, set(PERFORMANCE_LENGTHS), name)
         self._prefill = self._pairs(prefill, 'Prefill')
+        # Positive length interpolation preserves this order when it holds at
+        # every knot. Other valid tables retain the exact full-time scan path.
+        self._prefill_time_monotone = all(
+            self._prefill[(n, lower)][0] >= self._prefill[(n, upper)][0]
+            for n in PERFORMANCE_LENGTHS
+            for lower, upper in zip(FREQUENCIES_MHZ, FREQUENCIES_MHZ[1:]))
         self._decode = self._pairs(decode, 'Decode')
         self._quality = MappingProxyType({k: _number(v, 'mean_score', quality=True) for k, v in quality.items()})
         self._prefill_target = MappingProxyType({k: _number(v, 'Prefill target', positive=True) for k, v in prefill_target.items()})
@@ -74,8 +81,105 @@ class _TabulatedLUT:
         validate_length(length)
 
     def prefill(self, length: int) -> tuple[PrefillPrediction, ...]:
+        return self.prefill_candidates(length, FREQUENCIES_MHZ)
+
+    def prefill_lookup(self, length: int, *, latency_only: bool = False) -> PrefillLookup:
+        """Read predictions and the Reference goal with a single bracket search."""
+        if type(latency_only) is not bool:
+            raise ContractError('Prefill latency_only must be a boolean')
         bracket = _bracket(length, PERFORMANCE_LENGTHS)
-        return tuple(PrefillPrediction(length, f, *self._pair_at(self._prefill, (f,), bracket), bracket) for f in FREQUENCIES_MHZ)
+        target = _at(self._prefill_target[bracket.lower], self._prefill_target[bracket.upper], bracket)
+        predictions = (self._prefill_latencies_at(length, bracket) if latency_only
+                       else self._prefill_candidates_at(length, FREQUENCIES_MHZ, bracket))
+        return PrefillLookup(length, predictions, target, bracket)
+
+    def prefill_latencies(self, length: int) -> tuple[PrefillLatencyPrediction, ...]:
+        bracket = _bracket(length, PERFORMANCE_LENGTHS)
+        return self._prefill_latencies_at(length, bracket)
+
+    def prefill_within_target(self, length: int, target_s: float) -> PrefillLookup:
+        """Return target-eligible details, or all fastest ties when none qualify.
+
+        Search TTFT only; interpolate energy only for the returned frequencies.
+        Boundary probes are reused, never exposed as full-detail candidates.
+        """
+        target = finite(target_s, 'Prefill target seconds', positive=True)
+        bracket = _bracket(length, PERFORMANCE_LENGTHS)
+        predictions = self._prefill_within_threshold(length, target, bracket)
+        return PrefillLookup(length, predictions, target, bracket)
+
+    def prefill_within_budget(self, length: int, budget_s: float) -> PrefillBudgetLookup:
+        """Query a frozen planning budget, retaining zero/negative fallback cases."""
+        budget = finite(budget_s, 'Prefill budget seconds', allow_negative=True)
+        bracket = _bracket(length, PERFORMANCE_LENGTHS)
+        predictions = self._prefill_within_threshold(length, budget, bracket)
+        return PrefillBudgetLookup(length, predictions, budget, bracket)
+
+    def _prefill_within_threshold(self, length, threshold, bracket):
+        times = {}
+
+        def ttft(frequency_mhz):
+            if frequency_mhz not in times:
+                times[frequency_mhz] = _at(
+                    self._prefill[(bracket.lower, frequency_mhz)][0],
+                    self._prefill[(bracket.upper, frequency_mhz)][0], bracket)
+            return times[frequency_mhz]
+
+        if self._prefill_time_monotone:
+            # Descending frequency has nondecreasing TTFT, including exact ties.
+            ordered = FREQUENCIES_MHZ[::-1]
+
+            def prefix_end(limit):
+                lower, upper = 0, len(ordered)
+                while lower < upper:
+                    middle = (lower + upper) // 2
+                    if ttft(ordered[middle]) <= limit:
+                        lower = middle + 1
+                    else:
+                        upper = middle
+                return lower
+
+            end = prefix_end(threshold)
+            if end == 0:
+                end = prefix_end(ttft(ordered[0]))
+            frequencies = tuple(sorted(ordered[:end]))
+        else:
+            frequencies = tuple(f for f in FREQUENCIES_MHZ if ttft(f) <= threshold)
+            if not frequencies:
+                fastest = min(times.values())
+                frequencies = tuple(f for f in FREQUENCIES_MHZ if times[f] == fastest)
+
+        return tuple(PrefillPrediction(
+            length, f, ttft(f), _at(self._prefill[(bracket.lower, f)][1],
+                                  self._prefill[(bracket.upper, f)][1], bracket), bracket)
+            for f in frequencies)
+
+    def _prefill_latencies_at(self, length, bracket):
+        return tuple(PrefillLatencyPrediction(
+            length, f, _at(self._prefill[(bracket.lower, f)][0],
+                           self._prefill[(bracket.upper, f)][0], bracket), bracket)
+            for f in FREQUENCIES_MHZ)
+
+    def prefill_candidates(self, length: int, frequencies: tuple[int, ...]) -> tuple[PrefillPrediction, ...]:
+        bracket = _bracket(length, PERFORMANCE_LENGTHS)
+        if type(frequencies) is not tuple:
+            raise ContractError('Prefill frequencies must be an immutable tuple')
+        for value in frequencies:
+            frequency(value)
+        if len(set(frequencies)) != len(frequencies):
+            raise ContractError('Prefill frequencies must be unique')
+        return self._prefill_candidates_at(length, tuple(sorted(frequencies)), bracket)
+
+    def _prefill_candidates_at(self, length, frequencies, bracket):
+        return tuple(PrefillPrediction(length, f, *self._pair_at(self._prefill, (f,), bracket), bracket)
+                     for f in frequencies)
+
+    def decode_lookup(self, length: int) -> DecodeLookup:
+        """Read all Decode predictions and the Reference goal at one bracket."""
+        bracket = _bracket(length, PERFORMANCE_LENGTHS)
+        predictions = self._decode_at(length, bracket)
+        target = _at(self._decode_target[bracket.lower], self._decode_target[bracket.upper], bracket)
+        return DecodeLookup(length, predictions, target, bracket)
 
     def decode_within_budget(self, length: int, groups: tuple[int, ...],
                              budget_s: float) -> tuple[DecodePrediction, ...]:
@@ -122,6 +226,9 @@ class _TabulatedLUT:
 
     def decode(self, length: int) -> tuple[DecodePrediction, ...]:
         bracket = _bracket(length, PERFORMANCE_LENGTHS)
+        return self._decode_at(length, bracket)
+
+    def _decode_at(self, length, bracket):
         return tuple(DecodePrediction(length, g, f, *self._pair_at(self._decode, (g, f), bracket), bracket) for g in GROUPS for f in FREQUENCIES_MHZ)
 
     def quality(self, length: int) -> tuple[QualityPrediction, ...]:

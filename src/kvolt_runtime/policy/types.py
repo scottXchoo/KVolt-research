@@ -35,15 +35,16 @@ def group(value):
     return value
 
 
-def finite(value, name, *, positive=False, unit_interval=False):
+def finite(value, name, *, positive=False, unit_interval=False, allow_negative=False):
     if type(value) not in (int, float):
         raise ContractError(f'{name} must be a finite binary64 number')
     try:
         result = float(value)
     except (OverflowError, ValueError) as error:
         raise ContractError(f'{name} must be finite') from error
-    if not math.isfinite(result) or result < 0 or (positive and result == 0):
-        raise ContractError(f'{name} must be finite and {"positive" if positive else "nonnegative"}')
+    if not math.isfinite(result) or (result < 0 and (positive or unit_interval or not allow_negative)) or (positive and result == 0):
+        restriction = f' and {"positive" if positive else "nonnegative"}' if positive or unit_interval or not allow_negative else ''
+        raise ContractError(f'{name} must be finite{restriction}')
     if unit_interval and result > 1:
         raise ContractError(f'{name} must be a raw score in [0,1]')
     return result
@@ -71,6 +72,25 @@ class Bracket:
         object.__setattr__(self, 'weight', finite(self.weight, 'interpolation weight', unit_interval=True))
         if self.lower == self.upper and self.weight != 0:
             raise ContractError('an exact knot requires weight zero')
+
+
+@dataclass(frozen=True)
+class PrefillLatencyPrediction:
+    """Time-only screening evidence; an unqueried energy remains null."""
+
+    length: int
+    frequency_mhz: int
+    ttft_s: float
+    bracket: Bracket
+    energy_j: None = None
+
+    def __post_init__(self):
+        length(self.length)
+        frequency(self.frequency_mhz)
+        object.__setattr__(self, 'ttft_s', finite(self.ttft_s, 'TTFT seconds', positive=True))
+        _bracket(self.bracket, self.length)
+        if self.energy_j is not None:
+            raise ContractError('latency-only Prefill prediction cannot contain energy')
 
 
 @dataclass(frozen=True)
@@ -130,6 +150,57 @@ def _bracket(value, requested):
 
 
 @dataclass(frozen=True)
+class PrefillLookup:
+    """Prefill predictions and the FP16 goal at one shared length bracket."""
+
+    length: int
+    predictions: tuple[PrefillPrediction, ...] | tuple[PrefillLatencyPrediction, ...]
+    target_s: float
+    bracket: Bracket
+
+    def __post_init__(self):
+        length(self.length)
+        object.__setattr__(self, 'target_s', finite(self.target_s, 'Prefill target seconds', positive=True))
+        _bracket(self.bracket, self.length)
+        if type(self.predictions) is not tuple:
+            raise ContractError('Prefill lookup predictions must be an immutable tuple')
+
+
+@dataclass(frozen=True)
+class PrefillBudgetLookup:
+    """Prefill details filtered by a signed, already computed time budget."""
+
+    length: int
+    predictions: tuple[PrefillPrediction, ...]
+    budget_s: float
+    bracket: Bracket
+
+    def __post_init__(self):
+        length(self.length)
+        object.__setattr__(self, 'budget_s', finite(self.budget_s, 'Prefill budget seconds', allow_negative=True))
+        _bracket(self.bracket, self.length)
+        if type(self.predictions) is not tuple:
+            raise ContractError('Prefill budget predictions must be an immutable tuple')
+
+
+@dataclass(frozen=True)
+class DecodeLookup:
+    """Decode predictions and the FP16 goal at one shared length bracket."""
+
+    length: int
+    predictions: tuple[DecodePrediction, ...]
+    target_s: float
+    bracket: Bracket
+
+    def __post_init__(self):
+        length(self.length)
+        object.__setattr__(self, 'target_s', finite(self.target_s, 'Decode target seconds/token', positive=True))
+        _bracket(self.bracket, self.length)
+        if type(self.predictions) is not tuple:
+            raise ContractError('Decode lookup predictions must be an immutable tuple')
+
+
+@dataclass(frozen=True)
 class LUTProvenance:
     kind: str
     source_device: str
@@ -148,8 +219,14 @@ class LUTRepository(Protocol):
         ...
 
     def prefill(self, length: int) -> tuple[PrefillPrediction, ...]: ...
+    def prefill_lookup(self, length: int, *, latency_only: bool = False) -> PrefillLookup: ...
+    def prefill_within_target(self, length: int, target_s: float) -> PrefillLookup: ...
+    def prefill_within_budget(self, length: int, budget_s: float) -> PrefillBudgetLookup: ...
+    def prefill_latencies(self, length: int) -> tuple[PrefillLatencyPrediction, ...]: ...
+    def prefill_candidates(self, length: int, frequencies: tuple[int, ...]) -> tuple[PrefillPrediction, ...]: ...
     def quality(self, length: int) -> tuple[QualityPrediction, ...]: ...
     def decode(self, length: int) -> tuple[DecodePrediction, ...]: ...
+    def decode_lookup(self, length: int) -> DecodeLookup: ...
     def decode_within_budget(self, length: int, groups: tuple[int, ...],
                              budget_s: float) -> tuple[DecodePrediction, ...]: ...
     def prefill_target(self, length: int) -> float: ...
@@ -179,7 +256,7 @@ class KneeResult:
 
 @dataclass(frozen=True)
 class PrefillCandidate:
-    prediction: PrefillPrediction
+    prediction: PrefillPrediction | PrefillLatencyPrediction
     meets_budget: bool
     selected: bool
     reasons: tuple[str, ...] = ()
@@ -208,6 +285,9 @@ class PrefillDecision:
     candidates: tuple[PrefillCandidate, ...]
     t0_ns: int
     tp_ns: int
+    prefilter_ns: int
+    selection_rule: str = 'reference_budget'
+    lookup_end_ns: int | None = None
 
 
 @dataclass(frozen=True)

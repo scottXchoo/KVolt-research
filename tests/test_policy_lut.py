@@ -73,6 +73,48 @@ def test_preflight_does_not_query_online(monkeypatch):
     repo.preflight(1777)
 
 
+def test_prefill_latency_scan_skips_energy_and_details_only_query_requested_rows(monkeypatch):
+    from kvolt_runtime.policy import lut
+    from kvolt_runtime.policy.types import PrefillLatencyPrediction
+
+    table = {(n, f): (n / 1024 + f / 1000, 1000.0 + f) for n in P for f in F}
+    repo = MockLUTRepository(prefill=table)
+    original = lut._at
+    energy_queries = []
+
+    def observed(lo, hi, bracket):
+        if lo >= 1000:
+            energy_queries.append(lo)
+        return original(lo, hi, bracket)
+
+    monkeypatch.setattr(lut, '_at', observed)
+    latencies = repo.prefill_latencies(1536)
+    assert tuple(row.frequency_mhz for row in latencies) == F
+    assert all(isinstance(row, PrefillLatencyPrediction) and row.energy_j is None for row in latencies)
+    assert latencies[0].ttft_s == 0.5 * table[(1024, 408)][0] + 0.5 * table[(2048, 408)][0]
+    assert energy_queries == []
+
+    details = repo.prefill_candidates(1536, (918, 510))
+    assert tuple(row.frequency_mhz for row in details) == (510, 918)
+    assert tuple(row.energy_j for row in details) == (1510.0, 1918.0)
+    assert energy_queries == [1510.0, 1918.0]
+    assert repo.prefill_candidates(1536, ()) == ()
+    assert len(repo.prefill(1536)) == 8
+
+
+@pytest.mark.parametrize('frequencies', [None, [408], (408, 408), (409,), (408.0,), (True,)])
+def test_prefill_partial_lookup_rejects_invalid_frequency_requests(frequencies):
+    with pytest.raises(ContractError):
+        MockLUTRepository().prefill_candidates(1536, frequencies)
+
+
+@pytest.mark.parametrize('method', ['prefill_latencies', 'prefill_candidates'])
+def test_partial_prefill_lookup_preserves_length_support(method):
+    args = () if method == 'prefill_latencies' else ((408,),)
+    with pytest.raises(ContractError):
+        getattr(MockLUTRepository(), method)(8193, *args)
+
+
 def test_mock_overrides_copied_validated_and_exact():
     quality = {(n, g): 0.1 + g / 1000 for n in Q for g in GROUPS}
     repo = MockLUTRepository(quality=quality)

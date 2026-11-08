@@ -59,7 +59,8 @@ The conditional query interpolates TPOT for active G first and returns all rows
 with TPOT <= Bd, interpolating energy only for those rows. If none pass, it
 examines the remaining global candidates, reuses TPOT probes, and returns all
 exact global minimum-TPOT ties with their energies. It never queries energy for
-rejected rows or re-queries all details to build a trace. Existing full Decode queries remain available for offline comparisons.
+rejected rows or re-queries all details to build a trace. Existing full Decode
+and combined lookup APIs remain available for offline compatibility.
 
 DC validates an immutable nonempty tuple of at most 40 unique original (G,f)
 rows, requested L, containing shared brackets and finite metrics. A normal

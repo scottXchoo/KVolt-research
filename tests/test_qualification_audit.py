@@ -6,7 +6,7 @@ from fractions import Fraction
 import pytest
 
 from kvolt_runtime.qualification.audit import (
-    RAILS, audit_native, audit_restoration, audit_session, audit_warmup, integrate_trace,
+    RAILS, audit_native, audit_policy, audit_restoration, audit_session, audit_warmup, integrate_trace,
 )
 from kvolt_runtime.qualification.contracts import canonical_json, file_sha256, value_sha256
 
@@ -54,6 +54,247 @@ def test_exact_boundary_is_not_a_strict_outside_bracket():
 def test_gap_cannot_be_repaired_by_interpolation():
     with pytest.raises(ValueError, match='gap'):
         integrate_trace(trace(), 250_000_000, 1_750_000_000, 999_999_999)
+
+
+def partial_prefill_result(*, fallback=False, initially_empty=False):
+    # Manually specified screening at 0.1 s and completed lookup at 0.6/0.8 s.
+    # 510/612 MHz alone pass screening; final budget may remove one or both.
+    t0 = 1_000_000_000
+    prefilter = t0 + (1_200_000_000 if initially_empty else 100_000_000)
+    elapsed = 1_300_000_000 if initially_empty else (800_000_000 if fallback else 600_000_000)
+    tp = t0 + elapsed
+    predictions = [{'length': 1024, 'frequency_mhz': f, 'ttft_s': 2.0,
+                    'energy_j': None, 'bracket': {'lower': 1024, 'upper': 1024, 'weight': 0.0}}
+                   for f in (408, 510, 612, 714, 816, 918, 1020, 1122)]
+    predictions[1].update(ttft_s=0.4, energy_j=5.0)
+    predictions[2].update(ttft_s=0.4 if initially_empty else 0.5, energy_j=2.0)
+    selected = predictions[2 if initially_empty else 1]
+    return {'request': {'length': 1024}, 'timing': {'t0_ns': t0, 't1_ns': 3_000_000_000},
+            'decisions': {'prefill': {'candidates': [{'prediction': row} for row in predictions],
+                'selected': selected, 'prefilter_ns': prefilter, 'tp_ns': tp, 'elapsed_ns': elapsed,
+                'target_s': 1.0, 'budget_s': 1.0-elapsed/1e9,
+                'selection_path': 'latency_fallback' if fallback or initially_empty else 'energy_min'},
+                'decode': {'status': 'skipped', 'selected': None, 'candidates': []}},
+            'generation': {'token_ids': [17]},
+            'device': {'prefill': {'start_ns': tp+10_000_000, 'end_ns': tp+20_000_000,
+                'verified': True, 'observed': dict.fromkeys(('min_hz', 'max_hz', 'cur_hz'),
+                    selected['frequency_mhz']*1_000_000)}, 'decode': None}}
+
+
+@pytest.mark.parametrize('options', [{}, {'fallback': True}, {'initially_empty': True}])
+def test_audit_partial_prefill_preserves_final_budget_and_fallback(options):
+    audit_policy(partial_prefill_result(**options))
+
+
+@pytest.mark.parametrize('mutation', ['missing_energy', 'unnecessary_energy', 'nan_energy',
+    'clock_before_start', 'clock_after_lookup', 'boolean_clock', 'float_clock', 'missing_clock', 'wrong_screen'])
+def test_audit_partial_prefill_rejects_inconsistent_lookup_evidence(mutation):
+    result = partial_prefill_result()
+    pc = result['decisions']['prefill']
+    if mutation == 'missing_energy':
+        pc['candidates'][2]['prediction']['energy_j'] = None
+    elif mutation == 'unnecessary_energy':
+        pc['candidates'][0]['prediction']['energy_j'] = 0.0
+    elif mutation == 'nan_energy':
+        pc['candidates'][2]['prediction']['energy_j'] = float('nan')
+    elif mutation == 'clock_before_start':
+        pc['prefilter_ns'] = result['timing']['t0_ns']-1
+    elif mutation == 'clock_after_lookup':
+        pc['prefilter_ns'] = pc['tp_ns']+1
+    elif mutation == 'boolean_clock':
+        pc['prefilter_ns'] = True
+    elif mutation == 'float_clock':
+        pc['prefilter_ns'] = float(pc['prefilter_ns'])
+    elif mutation == 'missing_clock':
+        del pc['prefilter_ns']
+    else:
+        pc['prefilter_ns'] = result['timing']['t0_ns']+600_000_000
+    with pytest.raises(ValueError):
+        audit_policy(result)
+
+
+@pytest.mark.parametrize('mutation', [None, 'energy', 'time', 'bracket', 'target'])
+def test_audit_partial_prefill_checks_queried_and_time_only_rows_against_repository(mutation):
+    from kvolt_runtime.policy.mock import MockLUTRepository
+    from kvolt_runtime.policy.types import FREQUENCIES_MHZ, PERFORMANCE_LENGTHS
+
+    cells = {f: (2.0, 1.0) for f in FREQUENCIES_MHZ}
+    cells.update({510: (0.4, 5.0), 612: (0.5, 2.0)})
+    repository = MockLUTRepository(
+        prefill={(n, f): cells[f] for n in PERFORMANCE_LENGTHS for f in FREQUENCIES_MHZ},
+        prefill_target={n: 1.0 for n in PERFORMANCE_LENGTHS})
+    result = partial_prefill_result()
+    pc = result['decisions']['prefill']
+    if mutation == 'energy':
+        pc['candidates'][2]['prediction']['energy_j'] = 3.0
+    elif mutation == 'time':
+        pc['candidates'][0]['prediction']['ttft_s'] = 1.5
+    elif mutation == 'bracket':
+        pc['candidates'][0]['prediction']['bracket']['upper'] = 2048
+    elif mutation == 'target':
+        pc['target_s'] = 1.1
+        pc['budget_s'] = pc['target_s']-pc['elapsed_ns']/1e9
+    if mutation is None:
+        audit_policy(result, repository)
+    else:
+        with pytest.raises(ValueError, match='sealed LUT'):
+            audit_policy(result, repository)
+
+
+def target_prefill_result(*, fallback=False):
+    result = partial_prefill_result()
+    pc = result['decisions']['prefill']
+    pc.update(selection_rule='target_ttft', budget_s=1.0, t0_ns=result['timing']['t0_ns'],
+              predicted_feasible=not fallback)
+    rows = [record['prediction'] for record in pc['candidates']][1:3]
+    if fallback:
+        for row in rows:
+            row['ttft_s'] = 1.5
+    pc['selected'] = rows[1]
+    pc['selection_path'] = 'latency_fallback' if fallback else 'energy_min'
+    pc['candidates'] = [dict(prediction=row, meets_budget=not fallback, selected=i == 1,
+        reasons=(['time_budget_exceeded'] if fallback else []) +
+                (['latency_fallback'] if fallback and i == 1 else ['not_selected'] if i == 0 else []))
+        for i, row in enumerate(rows)]
+    result['device']['prefill']['observed'] = dict.fromkeys(('min_hz', 'max_hz', 'cur_hz'), 612000000)
+    return result
+
+
+@pytest.mark.parametrize('fallback', [False, True])
+def test_audit_target_prefill_accepts_sparse_trace_without_elapsed_subtraction(fallback):
+    result = target_prefill_result(fallback=fallback)
+    audit_policy(result)
+
+
+@pytest.mark.parametrize('mutation', ['unknown_rule', 'null_rule', 'missing_row_energy', 'nan_time',
+    'missing_prediction_field', 'invalid_bracket', 'mixed_candidates', 'unequal_fallback',
+    'wrong_budget', 'boolean_budget', 'duplicate', 'empty', 'missing_clock', 'boolean_clock', 'elapsed',
+    'missing_length', 'missing_prediction', 'foreign_candidate',
+    'selected_flag', 'budget_flag', 'reasons', 'feasibility', 'wrong_winner', 'wrong_branch',
+    'boolean_selected_metric'])
+def test_audit_target_prefill_rejects_malformed_evidence(mutation):
+    result = target_prefill_result(fallback=mutation == 'unequal_fallback')
+    pc = result['decisions']['prefill']
+    row = pc['candidates'][0]['prediction']
+    if mutation == 'unknown_rule': pc['selection_rule'] = 'future_rule'
+    elif mutation == 'null_rule': pc['selection_rule'] = None
+    elif mutation == 'missing_row_energy': row['energy_j'] = None
+    elif mutation == 'nan_time': row['ttft_s'] = float('nan')
+    elif mutation == 'missing_prediction_field': del row['energy_j']
+    elif mutation == 'invalid_bracket': row['bracket']['weight'] = True
+    elif mutation == 'mixed_candidates': row['ttft_s'] = 2.0
+    elif mutation == 'unequal_fallback': row['ttft_s'] = 1.6
+    elif mutation == 'wrong_budget': pc['budget_s'] -= .6
+    elif mutation == 'boolean_budget': pc['budget_s'] = True
+    elif mutation == 'missing_length': del row['length']
+    elif mutation == 'missing_prediction': del pc['candidates'][0]['prediction']
+    elif mutation == 'foreign_candidate': pc['candidates'][0] = None
+    elif mutation == 'duplicate': pc['candidates'].append(copy.deepcopy(pc['candidates'][0]))
+    elif mutation == 'empty': pc['candidates'] = []
+    elif mutation == 'missing_clock': del pc['prefilter_ns']
+    elif mutation == 'boolean_clock': pc['prefilter_ns'] = True
+    elif mutation == 'elapsed': pc['elapsed_ns'] += 1
+    elif mutation == 'selected_flag': pc['candidates'][0]['selected'] = True
+    elif mutation == 'budget_flag': pc['candidates'][0]['meets_budget'] = False
+    elif mutation == 'reasons': pc['candidates'][0]['reasons'] = []
+    elif mutation == 'feasibility': pc['predicted_feasible'] = False
+    elif mutation == 'boolean_selected_metric':
+        pc['candidates'][1]['prediction']['energy_j'] = 1.0
+        pc['selected'] = copy.deepcopy(pc['selected'])
+        pc['selected']['energy_j'] = True
+    elif mutation == 'wrong_winner': pc['selected'] = row
+    elif mutation == 'wrong_branch': pc['selection_path'] = 'latency_fallback'
+    with pytest.raises(ValueError):
+        audit_policy(result)
+
+
+@pytest.mark.parametrize('fallback', [False, True])
+@pytest.mark.parametrize('mutation', [None, 'omitted', 'energy', 'time', 'target'])
+def test_audit_target_prefill_checks_exact_filtered_set_against_repository(fallback, mutation):
+    from kvolt_runtime.policy.mock import MockLUTRepository
+    from kvolt_runtime.policy.types import FREQUENCIES_MHZ, PERFORMANCE_LENGTHS
+
+    result = target_prefill_result(fallback=fallback)
+    pc = result['decisions']['prefill']
+    cells = {f: (2.0, 1.0) for f in FREQUENCIES_MHZ}
+    cells.update({510: (1.5 if fallback else .4, 5.0), 612: (1.5 if fallback else .5, 2.0)})
+    repository = MockLUTRepository(
+        prefill={(n, f): cells[f] for n in PERFORMANCE_LENGTHS for f in FREQUENCIES_MHZ},
+        prefill_target={n: 1.0 for n in PERFORMANCE_LENGTHS})
+    if mutation == 'omitted': pc['candidates'] = pc['candidates'][1:]
+    elif mutation == 'energy': pc['candidates'][0]['prediction']['energy_j'] = 6
+    elif mutation == 'time': pc['candidates'][0]['prediction']['ttft_s'] = 1.6 if fallback else .3
+    elif mutation == 'target': pc['target_s'] = pc['budget_s'] = 1.1
+    if mutation is None:
+        audit_policy(result, repository)
+    else:
+        with pytest.raises(ValueError, match='sealed LUT|candidate evidence'):
+            audit_policy(result, repository)
+
+
+def reference_budget_result(*, fallback=False, budget=.75):
+    result = target_prefill_result(fallback=fallback)
+    pc = result['decisions']['prefill']
+    elapsed_ns = round((pc['target_s']-budget)*1_000_000_000)
+    tp = result['timing']['t0_ns'] + elapsed_ns
+    pc.update(selection_rule='reference_budget', tp_ns=tp, prefilter_ns=tp, elapsed_ns=elapsed_ns,
+              budget_s=pc['target_s']-elapsed_ns/1e9, lookup_end_ns=tp+550_000_000)
+    result['device']['prefill'].update(start_ns=tp+560_000_000, end_ns=tp+570_000_000)
+    result['timing']['t1_ns'] = tp+600_000_000
+    return result
+
+
+@pytest.mark.parametrize('fallback,budget', [(False, .75), (True, .75), (True, 0.0), (True, -.2)])
+def test_audit_reference_budget_uses_reference_boundary_once(fallback, budget):
+    audit_policy(reference_budget_result(fallback=fallback, budget=budget))
+
+
+@pytest.mark.parametrize('mutation', ['target_budget', 'double_subtraction', 'alias',
+    'end_before_tp', 'end_boolean', 'end_float', 'end_missing', 'apply_before_lookup',
+    'elapsed', 'boolean_budget', 'missing_row_energy', 'target_only_candidate'])
+def test_audit_reference_budget_rejects_wrong_boundary_or_candidate_evidence(mutation):
+    result = reference_budget_result()
+    pc = result['decisions']['prefill']
+    if mutation == 'target_budget': pc['budget_s'] = pc['target_s']
+    elif mutation == 'double_subtraction': pc['budget_s'] = pc['target_s']-(pc['lookup_end_ns']-pc['t0_ns'])/1e9
+    elif mutation == 'alias': pc['prefilter_ns'] -= 1
+    elif mutation == 'end_before_tp': pc['lookup_end_ns'] = pc['tp_ns']-1
+    elif mutation == 'end_boolean': pc['lookup_end_ns'] = True
+    elif mutation == 'end_float': pc['lookup_end_ns'] = float(pc['lookup_end_ns'])
+    elif mutation == 'end_missing': del pc['lookup_end_ns']
+    elif mutation == 'apply_before_lookup': result['device']['prefill']['start_ns'] = pc['lookup_end_ns']-1
+    elif mutation == 'elapsed': pc['elapsed_ns'] += 1
+    elif mutation == 'boolean_budget': pc['budget_s'] = True
+    elif mutation == 'missing_row_energy': pc['candidates'][0]['prediction']['energy_j'] = None
+    elif mutation == 'target_only_candidate': pc['candidates'][0]['prediction']['ttft_s'] = .9
+    with pytest.raises(ValueError):
+        audit_policy(result)
+
+
+@pytest.mark.parametrize('fallback', [False, True])
+@pytest.mark.parametrize('mutation', [None, 'omitted', 'energy', 'time', 'target'])
+def test_audit_reference_budget_matches_exact_sealed_candidate_set(fallback, mutation):
+    from kvolt_runtime.policy.mock import MockLUTRepository
+    from kvolt_runtime.policy.types import FREQUENCIES_MHZ, PERFORMANCE_LENGTHS
+    result = reference_budget_result(fallback=fallback)
+    pc = result['decisions']['prefill']
+    cells = {f: (2.0, 1.0) for f in FREQUENCIES_MHZ}
+    cells.update({408: (.9 if not fallback else 2., 0.),
+                  510: (1.5 if fallback else .4, 5.), 612: (1.5 if fallback else .5, 2.)})
+    repository = MockLUTRepository(
+        prefill={(n, f): cells[f] for n in PERFORMANCE_LENGTHS for f in FREQUENCIES_MHZ},
+        prefill_target={n: 1.0 for n in PERFORMANCE_LENGTHS})
+    if mutation == 'omitted': pc['candidates'] = pc['candidates'][1:]
+    elif mutation == 'energy': pc['candidates'][0]['prediction']['energy_j'] = 6
+    elif mutation == 'time': pc['candidates'][0]['prediction']['ttft_s'] = 1.6 if fallback else .3
+    elif mutation == 'target':
+        pc['target_s'] = 1.1
+        pc['budget_s'] = pc['target_s']-pc['elapsed_ns']/1e9
+    if mutation is None:
+        audit_policy(result, repository)
+    else:
+        with pytest.raises(ValueError, match='sealed LUT|candidate evidence'):
+            audit_policy(result, repository)
 
 
 @pytest.fixture
