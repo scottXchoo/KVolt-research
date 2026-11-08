@@ -33,8 +33,10 @@ def configure_parser(parser):
     inputs.add_argument('--manifest', type=Path, help='kvolt-request-manifest-v1 JSON')
     parser.add_argument('--model-dir', type=Path, required=True, help='fixed pinned model snapshot directory')
     source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument('--lut-dir', type=Path, help='sealed measured LUT bundle; no synthetic fallback')
+    source.add_argument('--lut-dir', type=Path, help='sealed measured bundle or pinned compact LUT directory; no synthetic fallback')
     source.add_argument('--mock', choices=SCENARIOS, help='explicit synthetic LUT; development only')
+    parser.add_argument('--reference-lut-dir', type=Path,
+                        help='sealed AGX2 FP16 target bundle, explicitly required for compact LUTs')
     parser.add_argument('--output-dir', type=Path, required=True, help='new directory; existing paths are refused')
     parser.add_argument('--max-new-tokens', type=int, default=MISSING, help='output cap 1..512; item > CLI > 512')
     parser.add_argument('--mode', choices=('development', 'performance'), default='development')
@@ -51,9 +53,12 @@ def configure_parser(parser):
 
 
 def _repository(args):
+    reference = getattr(args, 'reference_lut_dir', None)
     if args.lut_dir is not None:
-        from .policy.lut import MeasuredLUTRepository
-        return MeasuredLUTRepository(args.lut_dir)
+        from .policy.compact import load_lut_repository
+        return load_lut_repository(args.lut_dir, reference_lut_dir=reference)
+    if reference is not None:
+        raise ValueError('--reference-lut-dir requires --lut-dir; cannot combine with --mock')
     from .policy.mock import MockLUTRepository
     return MockLUTRepository(args.mock)
 
@@ -269,6 +274,8 @@ def run(args, *, lock=None, factories=None, emit=None):
     unlock_errors = []
     with _stdout_channel(emit) as output:
         try:
+            if getattr(args, 'reference_lut_dir', None) is not None and args.mock is not None:
+                raise ValueError('--reference-lut-dir requires --lut-dir; cannot combine with --mock')
             qualification_path = getattr(args, 'qualification', None)
             if args.mode == 'performance' and qualification_path is None:
                 raise ExecutionError('M4_QUALIFICATION_REQUIRED', 'qualification',

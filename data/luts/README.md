@@ -44,16 +44,25 @@ match that document. Policy semantics follow
 [Method](https://app.notion.com/p/40be0acd77f88014a36beb5285250208) under
 [[연구] KVolt](https://app.notion.com/p/40be0acd77f880a98f05fd393b9e0ccd).
 
-The export's original `manifest.json` and FP16 reference target curves were
-not supplied in this request. This README records the received files; it does
-not recreate or replace that manifest, establish missing provenance, or add
-reference targets.
+The original [`manifest.json`](latest/manifest.json) was subsequently recovered
+from the compact export and preserved byte for byte (4,809 B; SHA-256
+`86b2343eed65432d1ee1f071fa8188a33789bdcf0309f325e689ec0bae37591a`).
+It seals these three arrays and records original source paths/hashes,
+measurement conditions, units and interpolation rules. It does not contain
+FP16 target curves or a source commit. Its original
+`performance_runtime_accuracy_or_SLO_validated=false` and
+`quality_runtime_eligible=false` remain unchanged.
 
-The existing `MeasuredLUTRepository` still accepts the older sealed AGX2
-repeat5 bundle contract described in [`docs/policy-lut.md`](../../docs/policy-lut.md).
-It does not load these compact arrays. Adopting them as the latest lookup data
-does not switch the Runtime loader or establish Runtime accuracy, SLO or AGX2
-qualification for this AGX1 data.
+`CompactLUTRepository` now loads these predictions with an explicitly supplied
+sealed `MeasuredLUTRepository` for FP16 targets. The current AGX2 runtime and
+its frozen FP16 goals remain unchanged. CLI use requires
+`--lut-dir latest-path --reference-lut-dir sealed-agx2-path` for `run`, or
+`--lut-bundle latest-path --reference-lut-dir sealed-agx2-path` for `diagnose`.
+This is an explicitly recorded AGX1-prediction/AGX2-reference development
+comparison. It does not turn AGX2 targets into AGX1 targets, establish Runtime
+accuracy/SLO, or inherit old AGX2 qualification. No same-source complete AGX1
+FP16 curve is supplied or extrapolated. See
+[`docs/policy-lut.md`](../../docs/policy-lut.md) for loader and provenance details.
 
 ## Received-file SHA-256
 

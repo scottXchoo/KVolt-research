@@ -12,11 +12,51 @@ limits are recorded in [`data/luts/README.md`](../data/luts/README.md).
 Use the older AGX2 sealed bundle for explicitly requested historical
 reproduction, rather than as the default source of current LUT values.
 
-This lookup-data choice does not change the Runtime loader. The compact
-files lack the original export manifest and FP16 reference target curves in
-this checkout. `MeasuredLUTRepository` still uses the sealed bundle contract
-below and does not support these compact arrays. No Runtime accuracy, SLO or
-AGX2 qualification is established for the new AGX1 data by this data move.
+## Latest compact Runtime adapter
+
+`CompactLUTRepository(compact_path, *, reference_repository)` loads the latest
+AGX1 predictions. The recovered original `manifest.json` is copied byte for
+byte into `data/luts/latest/`; its SHA-256 is
+`86b2343eed65432d1ee1f071fa8188a33789bdcf0309f325e689ec0bae37591a`.
+The adapter checks that pin and the three table hashes/byte counts before
+validating schema, units, positional row widths, strict integer identifiers,
+all 459 cells, positive times, nonnegative energies and raw quality in [0,1].
+It shares the length-only interpolation and support contract below.
+
+The original compact export contains no FP16 target curves. An explicit
+`reference_repository` must be an actual sealed `MeasuredLUTRepository`.
+Each target knot is copied unchanged from that repository's `prefill_target`
+and `decode_target`; no compact performance cell substitutes for a target.
+The current runtime device and its frozen FP16 goals remain AGX2. Applying
+AGX1 predictions against those separately supplied AGX2 references is an
+explicit development comparison, with a device mismatch recorded.
+
+`load_lut_repository(path, *, reference_lut_dir=None)` in
+`kvolt_runtime.policy.compact` selects the sealed or compact distribution.
+Compact inputs require `reference_lut_dir` pointing to the sealed AGX2 bundle.
+Missing/unknown/ambiguous formats fail; there is no synthetic fallback.
+Passing a reference directory for a sealed input or `--mock` is rejected.
+Both CLI commands expose the explicit reference option:
+
+```sh
+kvolt diagnose --lut-bundle data/luts/latest --reference-lut-dir /path/to/agx2-repeat5-20261103 \
+  --length 1024 --max-new-tokens 1 --pc-elapsed-ns 0
+kvolt run --lut-dir data/luts/latest --reference-lut-dir /path/to/agx2-repeat5-20261103 \
+  --prompt-file prompt.txt --model-dir /path/to/0e9e39f249a16976918f6564b8830bc894c89659 \
+  --device-profile device.json --native-profile agx2 --output-dir /path/to/new-output
+```
+
+Compact provenance has `kind=measured`, `source_device=agx1`, the original
+manifest/table hashes and `source_commit=null` (the original manifest does not
+identify a commit). Metadata preserves the entire original compact manifest,
+including `performance_runtime_accuracy_or_SLO_validated=false` and
+`quality_runtime_eligible=false`. `target_repository` separately retains the
+sealed AGX2 source/commit, hashes, source conditions and FP16 curve provenance;
+`target_source_device=AGX2` and `cross_device_reference=true` identify the
+comparison. The runtime also records prediction source versus execution
+device in `lut_device_conditions`. No Runtime accuracy, SLO or AGX2 formal
+qualification is established by loading these AGX1 measurements. Existing
+AGX2 qualification evidence cannot qualify this changed prediction source.
 
 ## Existing M2 sealed measured Runtime adapter
 
@@ -77,3 +117,6 @@ CPU tests discover real data through `KVOLT_LUT_BUNDLE`, or the known sibling
 integration tests explicitly skip. They compare all exact/midpoint lookups,
 raw five-repeat means/request ratios, raw independent reference maxima, source
 flags and sealed files. No GPU or scientific package is imported by the loader.
+Compact tests additionally compare every original numeric row, validate
+separate target provenance and exercise both CLI paths and rejection before
+GPU ownership when old AGX2 qualification is supplied for the new AGX1 LUT.

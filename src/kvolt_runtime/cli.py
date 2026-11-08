@@ -23,8 +23,10 @@ def _parser():
     diagnose.add_argument('--dc-elapsed-ns', type=int, help='assumed nonnegative DC elapsed ns; required when DC is active')
     diagnose.add_argument('--first-token-id', type=int, default=17, help='assumed first token ID, 0..128255 (default: 17); EOS skips DC')
     source = diagnose.add_mutually_exclusive_group(required=True)
-    source.add_argument('--lut-bundle', type=Path, help='sealed measured LUT bundle; never falls back to Mock')
+    source.add_argument('--lut-bundle', type=Path, help='sealed measured bundle or pinned compact LUT directory; no Mock fallback')
     source.add_argument('--mock', choices=SCENARIOS, help='explicit synthetic LUT scenario')
+    diagnose.add_argument('--reference-lut-dir', type=Path,
+                          help='sealed AGX2 FP16 target bundle, explicitly required for compact LUTs')
     diagnose.add_argument('--output', type=Path, help='also save the JSON to a new file; existing paths are refused')
     from .run_cli import configure_parser
     configure_parser(commands.add_parser('run', help='run sequential adaptive development requests'))
@@ -67,9 +69,12 @@ def _validate_inputs(args):
 
 
 def _build_repository(args):
+    reference = getattr(args, 'reference_lut_dir', None)
     if args.lut_bundle is not None:
-        from .policy.lut import MeasuredLUTRepository
-        return MeasuredLUTRepository(args.lut_bundle)
+        from .policy.compact import load_lut_repository
+        return load_lut_repository(args.lut_bundle, reference_lut_dir=reference)
+    if reference is not None:
+        raise ValueError('--reference-lut-dir requires --lut-bundle; cannot combine with --mock')
     from .policy.mock import MockLUTRepository
     return MockLUTRepository(args.mock)
 
