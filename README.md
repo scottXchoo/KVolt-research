@@ -26,6 +26,15 @@ KVolt/
 └── AGENTS.md          # 연구 근거·원자료 보존·작업 절차
 ```
 
+로컬 workspace의 현재 개발·실행 저장소는 `KVolt/`다.
+형제 [KVolt-support/](../KVolt-support/)에는 `KVolt-eval-pilot`,
+`KVolt-lut-source`, `KVolt-validation-20261108`,
+`KVolt-validation-current-20261109`를 원래 이름 그대로 모아 보존한다.
+이 보조 checkout·동결 검증 기록은 현재 실행 소스를 대신하지 않는다.
+CPU 테스트는 명시적 `KVOLT_LUT_BUNDLE`이 없을 때
+`../KVolt-support/KVolt-lut-source/data/luts/agx2-repeat5-20261103`을 찾고,
+기존 `../KVolt-lut-source/` 배치도 지원한다. 이 탐색은 테스트에만 적용된다.
+
 ## 기본 LUT와 실행 모드
 
 `kvolt run`과 `kvolt diagnose`는 LUT 옵션과 `--mock`를 생략하면

@@ -17,7 +17,7 @@ strict JSON report. Source bytes and targets remain unchanged. See
 ```sh
 python3 tools/latest_tpot_audit.py \
   --latest-dir data/luts/latest \
-  --reference-lut-dir ../KVolt-lut-source/data/luts/agx2-repeat5-20261103 \
+  --reference-lut-dir ../KVolt-support/KVolt-lut-source/data/luts/agx2-repeat5-20261103 \
   --output artifacts/latest-lut/feasibility.json
 ```
 

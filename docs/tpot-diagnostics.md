@@ -98,7 +98,7 @@ host overhead, so their individual contributions remain unresolved.
 ## LUT source evidence and interpretation
 
 The immutable source is
-`../KVolt-lut-source/data/luts/agx2-repeat5-20261103/decode-lut.json`.
+`../KVolt-support/KVolt-lut-source/data/luts/agx2-repeat5-20261103/decode-lut.json`.
 For each selected cell, `metrics.T_init_s.mean`, `tpot_actual_s.mean`, and
 `output_tokens.raw` give:
 

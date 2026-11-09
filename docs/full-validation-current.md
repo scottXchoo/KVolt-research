@@ -117,9 +117,12 @@ JUnit testcase는2445개이고 outer tests2526에는 subtests81개가 포함된�
 skip은 cache101/Prefill1/greedy1의 GPU opt-in 사례뿐이며 데이터/CPU skip은 없다.
 관련7모듈 집중548pass, compile도 exit0이다.
 
+아래 재현 명령과 문서 끝의 보존 링크는 현재 로컬 `KVolt-support/` 배치에 맞췄다.
+원 측정 수치·source identity·보존 artifact의 원본 경로 기록은 바꾸지 않았다.
+
 ```sh
 env -u KVOLT_RUN_GPU -u KVOLT_RUN_B1_GPU PYTHONDONTWRITEBYTECODE=1 \
-  KVOLT_LUT_BUNDLE=/Users/scottxchoo/Desktop/CSLab/07_Projects/KVolt-lut-source/data/luts/agx2-repeat5-20261103 \
+  KVOLT_LUT_BUNDLE=/Users/scottxchoo/Desktop/CSLab/07_Projects/KVolt-support/KVolt-lut-source/data/luts/agx2-repeat5-20261103 \
   /private/tmp/kvolt-prefill-test-venv/bin/python -m pytest -q --tb=short \
   --junitxml=artifacts/full-validation-20261109/v6-integration/tester-full.xml
 ```
@@ -344,7 +347,7 @@ RAM/RSS/CUDA pool은 겹치므로 합산하지 않는다. hash는 기록 바이�
 
 이전2026-11-08 시도의 원자료는 별도 보존 worktree에 있다. 현재 원본에 없는 과거
 경로를 상대 링크로 가정하지 않는다:
-[이전 source079 보고서](/Users/scottxchoo/Desktop/CSLab/07_Projects/KVolt-validation-20261108/docs/full-validation.md),
-[실패 r2 archive](/Users/scottxchoo/Desktop/CSLab/07_Projects/KVolt-validation-20261108/artifacts/full-validation-20261108/m4-failed-r2.tar.gz),
-[실패 r3 archive](/Users/scottxchoo/Desktop/CSLab/07_Projects/KVolt-validation-20261108/artifacts/full-validation-20261108/m4-failed-r3.tar.gz),
-[이전 성공 r4 archive](/Users/scottxchoo/Desktop/CSLab/07_Projects/KVolt-validation-20261108/artifacts/full-validation-20261108/m4-complete-r4.tar.gz).
+[이전 source079 보고서](/Users/scottxchoo/Desktop/CSLab/07_Projects/KVolt-support/KVolt-validation-20261108/docs/full-validation.md),
+[실패 r2 archive](/Users/scottxchoo/Desktop/CSLab/07_Projects/KVolt-support/KVolt-validation-20261108/artifacts/full-validation-20261108/m4-failed-r2.tar.gz),
+[실패 r3 archive](/Users/scottxchoo/Desktop/CSLab/07_Projects/KVolt-support/KVolt-validation-20261108/artifacts/full-validation-20261108/m4-failed-r3.tar.gz),
+[이전 성공 r4 archive](/Users/scottxchoo/Desktop/CSLab/07_Projects/KVolt-support/KVolt-validation-20261108/artifacts/full-validation-20261108/m4-complete-r4.tar.gz).

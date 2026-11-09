@@ -119,10 +119,13 @@ Python 3.10/NumPy 1.26.4 qualification must be reported separately.
 `test_actual_published_quality_curves_differential` checks all 15 Quality knots
 and 14 interior lengths against official Kneedle, after the measured adapter
 checks bundle pins and hashes. `KVOLT_LUT_BUNDLE` supplies that published bundle;
-without it, tests also check the sibling `KVolt-lut-source` checkout. Absence of
-the optional data source is reported as a data test skip, never as a dependency
-pass. An explicitly configured bad path fails. Published-table Decode examples
-inject an explicit no-Knee result and preserve the distinction from actual
+without it, the shared test configuration checks the workspace's
+`KVolt-support/KVolt-lut-source` checkout, then the legacy sibling
+`KVolt-lut-source` checkout for `data/luts/agx2-repeat5-20261103`.
+An explicit environment value is never overwritten. This is test-only discovery.
+Absence of the optional data source is reported as a data test skip, never as a
+dependency pass. An explicitly configured bad path fails. Published-table Decode
+examples inject an explicit no-Knee result and preserve the distinction from actual
 Kneedle differential tests.
 
 The initial set-only adapter assumption failed both actual-package tests on the

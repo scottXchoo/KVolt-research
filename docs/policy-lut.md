@@ -151,8 +151,12 @@ finite positive times/targets, nonnegative energies and raw quality in [0,1].
 Booleans, strings and missing values are rejected, never coerced. Supplied
 mappings are copied into private immutable tables at construction.
 
-CPU tests discover real data through `KVOLT_LUT_BUNDLE`, or the known sibling
-`KVolt-lut-source/data/luts/agx2-repeat5-20261103`. If unavailable, measured
+CPU tests use an explicit `KVOLT_LUT_BUNDLE` unchanged. When it is absent,
+`tests/conftest.py` checks the workspace's
+`KVolt-support/KVolt-lut-source/data/luts/agx2-repeat5-20261103`, then the
+legacy sibling `KVolt-lut-source/data/luts/agx2-repeat5-20261103`, and sets
+the test-process default only when a bundle directory exists. This discovery
+does not change runtime LUT selection. If unavailable, measured
 integration tests explicitly skip. They compare all exact/midpoint lookups,
 raw five-repeat means/request ratios, raw independent reference maxima, source
 flags and sealed files. No GPU or scientific package is imported by the loader.
