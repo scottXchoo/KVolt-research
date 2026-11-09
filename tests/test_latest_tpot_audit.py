@@ -22,6 +22,12 @@ class FixedKnee:
 
 
 class LatestFeasibilityTests(unittest.TestCase):
+    def setUp(self):
+        # Frozen historical counts remain regression evidence under the strict rule.
+        self.buffer_patch = patch('kvolt_runtime.config.TPOT_BUFFER_RATIO', 0.0)
+        self.buffer_patch.start()
+        self.addCleanup(self.buffer_patch.stop)
+
     @classmethod
     def setUpClass(cls):
         if CONFIGURED_REFERENCE is not None:

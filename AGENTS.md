@@ -17,6 +17,14 @@ KVolt의 고정 기본 LUT 진입점은 `data/luts/current/selection.json`이다
 
 두 경량 예측 묶음을 명시적으로 선택할 때는 `CompactLUTRepository`와 명시적인 `--reference-lut-dir`로 사용한다. 기본 선택은 위 current 파일이 예측·참조를 함께 지정한다. 최신 FP16 목표 참조는 `data/luts/agx2-reference-repeat10/`다. 사용자 제공 `reference.json`의 원본310bytes를 보존하고 A2 길이당10회·총80요청에서 TTFT와 요청별 평균 TPOT의 독립 최댓값을 사용하며 목표 배율은1.0이다. 길이만 보간하고 외삽하지 않으며 N=1은 TPOT 집계에서 제외한다. `manifest.json`은 로컬 생성한 통합 envelope이며 사용자 제공 원본 manifest가 아니다. `source-validation.json`은 AGX2 merged export의 기준24·1차보강16·2차보강40요청, 총80개 canonical result 바이트·SHA·source-origin/protocol hash 결속·시간·CPU 고정/기본 GPU 제어를 읽기 전용으로 대조한 요약이다. 개별 component 원본 디렉터리는 현재 없어 원본 manifest/completion SHA는 상속 선언이며 이번에 재검증하지 않았다(`original_component_manifests_rechecked=false`). 원 요청 JSON·prompt·출력 token ID를 포함하지 않는다. `CompactReferenceRepository`는 새 표와 이 검증 요약의 SHA·바이트를 검증하고 둘 모두 목표 출처에 바인딩한다. 이전 `data/luts/agx2-reference-repeat5/`의3파일은 5회·총40요청, `data/luts/agx2-reference-repeat3/`의 원본2파일은 3회·총24요청 재현용으로 보존하며 명시 선택한다. 이전 봉인 `MeasuredLUTRepository` 참조도 재현용으로 명시 선택할 수 있으며 기존 계약과 pin을 완화하지 않는다. Runtime 원본4파일·3회 Reference 원본2파일·5회 Reference 묶음3파일·새 10회 Reference 묶음3파일을 수정하지 않는다. 원본 validation의 runtime accuracy/SLO 및 Quality 적격성 false, 참조의 controller integration false를 보존한다. 장치가 일치해도 로더 연결만으로 정확성·SLO·기존 formal qualification을 승계하지 않는다. 이전 grant는 바뀐 source/pin을 거부해야 한다. 이번 등록에 GPU 재실측·push는 포함하지 않는다.
 
+## Reference TPOT 허용 버퍼
+
+2026-11-09 사용자 결정으로 TPOT의 허용 상한은 `Reference TPOT × (1 + TPOT_BUFFER_RATIO)`다. 전역 설정은 `src/kvolt_runtime/config.py`의 `TPOT_BUFFER_RATIO = 0.20`이며 새 프로세스를 시작하면 적용된다. `0.0`은 원 Reference 기준, `0.10`은 +10%, `0.30`은 +30%다. 유한한 비음수 숫자만 허용하며 bool·문자열·NaN·Inf·곱셈 overflow를 거부한다. TTFT에는 이 버퍼를 적용하지 않는다.
+
+원 Reference 표·manifest·pin·SHA와 원 실측은 수정하지 않는다. 길이 보간한 원 Reference에 버퍼를 한 번만 적용하고, 같은 유효 상한을 DC 계획 예산·후보 선택과 실제 TPOT SLO 판정에 사용한다. DC는 생성 시 비율을 고정하고 결정 기록에 `reference_target_s`·`tpot_buffer_ratio`·유효 `target_s`를 남긴다. Runtime 정책·qualification 조건에 비율을 결속하고 바뀐 소스/비율에 이전 grant를 승계하지 않는다. N=1/EOS의 Decode 생략·null, Quality·에너지·실제 N−1 계측과 Nmax−1 계획 예산은 유지한다.
+
+기존 문서의 TPOT 목표 배율1.0은 당시 검증 조건이다. 과거 결과를 새 20% 기준의 실제 실행이나 성능 개선으로 다시 표시하지 않는다. 버퍼는 허용 지연을 늘리는 정책이며 연산 속도 향상을 뜻하지 않는다. 정책·기록의 상세 계약은 `docs/policy-decode.md`와 Notion Method의 TPOT 허용 버퍼 절을 따른다.
+
 ## Runtime 실측 기반 Online LUT
 
 2026-11-09 사용자 요청에 따라 개발 `kvolt run`은 Offline 원본을 초기값으로 하는 별도 Online 보정 표를 사용한다. 원본 LUT/manifest/SHA, Quality와 FP16 Reference 목표를 수정하지 않는다. 기본 상태 파일은 `output-dir/online-lut.json`이고, `--online-lut-state PATH`로 동일 조건의 상태를 재사용하며 `--no-online-lut`로 동결 실행을 재현한다. `--online-lut-alpha`의 기본값은0.1이다. 정식 `performance`는 기존 동결 LUT와 qualification을 사용하며 Online 적격성을 승계하지 않는다.

@@ -30,7 +30,16 @@ nondecreasing. `prefilter_ns` equals `tp_ns` as a compatibility alias. This
 DC checks Nmax/first-EOS before lookup, then performs Quality lookup, Knee
 selection and active G determination, `decode_target(L)` Reference lookup and
 positive finite target validation, td clock and Bd calculation, then
-`decode_within_budget(L, groups, budget_s)`. This 2026-11-08 user revision moves
+`decode_within_budget(L, groups, budget_s)`. Since the 2026-11-09 user decision,
+DC snapshots the global `config.TPOT_BUFFER_RATIO=0.20` at construction and
+computes `target_s = reference_target_s * (1 + ratio)` once after raw Reference
+interpolation and before td. This effective target drives both Bd and Runner's
+inclusive actual TPOT SLO comparison. Raw `repo.decode_target(L)` and combined
+lookup targets retain the original FP16 values. Decisions preserve the raw
+Reference, ratio and effective target; the TPOT allowance never scales TTFT,
+predictions, energy or measured durations. A new process reads an edited global
+value, and a changed policy requires matching qualification evidence.
+The 2026-11-08 user revision moves
 Decode lookup after td. The query accepts a finite signed budget and a nonempty
 tuple of unique original G and canonicalizes their order. It returns all
 active/time-eligible details, or all exact global fastest TPOT ties if none

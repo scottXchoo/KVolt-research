@@ -10,6 +10,8 @@ import math
 from pathlib import Path
 
 from .contracts import canonical_json, strict_json, file_sha256, value_sha256, _lut_binding
+from ..config import buffered_tpot_target, resolve_tpot_buffer_ratio
+from ..policy.tpot import validate_tpot_policy
 
 RAILS = ('VDD_GPU_SOC', 'VDD_CPU_CV', 'VIN_SYS_5V0')
 EOS = {128001, 128008, 128009}
@@ -297,8 +299,7 @@ def _audit_budget_decode(dc, request, candidates, groups, quality, repository):
             fastest = min(row['tpot_s'] for row in full)
             expected = [row for row in full if row['tpot_s'] == fastest]
         require(canonical_json(candidates) == canonical_json(expected)
-                and canonical_json(dc['quality']) == canonical_json([asdict(row) for row in repository.quality(request['length'])])
-                and dc['target_s'] == repository.decode_target(request['length']),
+                and canonical_json(dc['quality']) == canonical_json([asdict(row) for row in repository.quality(request['length'])]),
                 'Decode predictions/quality/target differ from sealed LUT')
     require(type(dc.get('selected')) is dict
             and canonical_json(dc['selected']) in {canonical_json(row) for row in candidates},
@@ -323,9 +324,58 @@ def _audit_budget_decode(dc, request, candidates, groups, quality, repository):
                 and record.get('reasons') == reasons, 'DC candidate flags/reasons')
 
 
-def audit_policy(result, repository=None):
+def audit_slo(result):
+    """Retain observed violations; reject relabeling against another threshold."""
+    timing, decisions = result['timing'], result['decisions']
+    expected = {}
+    for phase, metric, key in (('prefill', 'ttft_s', 'ttft_met'),
+                               ('decode', 'mean_tpot_s', 'mean_tpot_met')):
+        target = decisions[phase].get('target_s')
+        observed = timing.get(metric)
+        expected[key] = (observed <= target if timing.get('valid') is True
+                         and observed is not None and target is not None else None)
+    require(type(result.get('slo')) is dict
+            and all(result['slo'].get(key) is value for key, value in expected.items()),
+            'recorded SLO differs from measured timing/effective target')
+
+
+def audit_tpot_target(dc, request, repository=None, *, expected_policy=None, require_new=False):
+    """Check raw/effective identity; historical records retain strict ratio zero."""
+    fields = ('reference_target_s', 'tpot_buffer_ratio', 'target_s', 'budget_s')
+    if dc['status'] == 'skipped':
+        require((not require_new or all(key in dc for key in fields))
+                and all(dc.get(key) is None for key in fields),
+                'skipped Decode target values must remain null')
+        return
+    has_raw = dc.get('reference_target_s') is not None
+    has_ratio = dc.get('tpot_buffer_ratio') is not None
+    require(has_raw == has_ratio and (has_raw or not require_new),
+            'missing TPOT buffer decision identity')
+    require(type(dc.get('target_s')) in (int, float) and math.isfinite(dc['target_s'])
+            and dc['target_s'] > 0, 'invalid TPOT effective target')
+    raw = dc['reference_target_s'] if has_raw else dc['target_s']
+    ratio = resolve_tpot_buffer_ratio(dc['tpot_buffer_ratio']) if has_ratio else 0.0
+    require(dc['target_s'] == buffered_tpot_target(raw, ratio), 'TPOT effective target mismatch')
+    if expected_policy is not None:
+        require(ratio == validate_tpot_policy(expected_policy)['ratio'], 'TPOT buffer policy mismatch')
+    if repository is not None:
+        require(raw == repository.decode_target(request['length']),
+                'TPOT raw Reference differs from sealed LUT')
+
+
+def audit_policy(result, repository=None, *, expected_policy=None):
     pc, dc = result['decisions']['prefill'], result['decisions']['decode']
     timing, request = result['timing'], result['request']
+    current = result.get('schema_version') == 'kvolt-request-result-v2'
+    if 'tpot_policy' in result:
+        require(current, 'TPOT policy requires current request schema')
+    if current or 'tpot_policy' in result:
+        recorded_policy = validate_tpot_policy(result.get('tpot_policy'))
+        if expected_policy is not None:
+            require(recorded_policy == expected_policy, 'request/session TPOT buffer policy mismatch')
+        expected_policy = recorded_policy
+    audit_tpot_target(dc, request, repository, expected_policy=expected_policy,
+                      require_new=current or expected_policy is not None)
     require('selection_rule' not in dc or dc['selection_rule'] == 'budget_filtered_decode', 'unknown DC selection rule')
     require('selection_rule' not in pc or pc['selection_rule'] in ('target_ttft', 'reference_budget'), 'unknown PC selection rule')
     if pc.get('selection_rule') in ('target_ttft', 'reference_budget'):
@@ -409,8 +459,7 @@ def audit_policy(result, repository=None):
         else:
             if repository is not None:
                 require(canonical_json(candidates) == canonical_json([asdict(row) for row in repository.decode(request['length'])])
-                        and canonical_json(dc['quality']) == canonical_json([asdict(row) for row in repository.quality(request['length'])])
-                        and dc['target_s'] == repository.decode_target(request['length']), 'Decode predictions/quality/target differ from sealed LUT')
+                        and canonical_json(dc['quality']) == canonical_json([asdict(row) for row in repository.quality(request['length'])]), 'Decode predictions/quality/target differ from sealed LUT')
             require(len(candidates) == 40 and {(row['group'], row['frequency_mhz']) for row in candidates}
                     == {(g, f) for g in GROUPS for f in FREQUENCIES},
                     'Decode candidate coverage')
@@ -422,6 +471,8 @@ def audit_policy(result, repository=None):
         receipt = result['device']['decode']
         require(dc['td_ns'] <= receipt['start_ns'] <= receipt['end_ns'] < result['generation']['token_ready_ns'][1],
                 'Decode clock application boundary')
+    if current or dc.get('tpot_buffer_ratio') is not None:
+        audit_slo(result)
     for phase in ('prefill', 'decode'):
         selection = result['decisions'][phase]['selected']
         if selection is None:
@@ -474,9 +525,23 @@ def audit_session(path, *, require_formal_warmup=False, binding=None, expected_r
     require(session['collect_power'] is True, 'formal verification requires actual collected power')
     require(session['device_preflight']['verified'] is True, 'device preparation unverified')
     audit_prepared(session['device_preflight'])
+    current = session.get('schema_version') == 'kvolt-session-v2'
+    policy = None
+    runtime = session.get('provenance', {}).get('runtime', {})
+    if 'tpot_policy' in session:
+        require(current, 'TPOT policy requires current session schema')
+    if current or 'tpot_policy' in session:
+        policy = validate_tpot_policy(session.get('tpot_policy'))
+        require(validate_tpot_policy(runtime.get('tpot_policy')) == policy,
+                'session/runtime TPOT buffer policy mismatch')
+    elif 'tpot_policy' in runtime:
+        policy = validate_tpot_policy(runtime['tpot_policy'])
     results, raw_rows = session['results'], 0
     require(results, 'empty completed session')
     if binding is not None:
+        if policy is not None or 'tpot_policy' in binding:
+            require(validate_tpot_policy(binding.get('tpot_policy')) == policy,
+                    'qualification/session TPOT buffer policy mismatch')
         provenance, runtime = session['provenance'], session['provenance']['runtime']
         require(runtime['source_worktree_dirty'] is False
                 and runtime['source_sha256'] == binding['runtime_source_sha256']
@@ -536,7 +601,9 @@ def audit_session(path, *, require_formal_warmup=False, binding=None, expected_r
                     require(receipt['identity'] == binding['identity'] and receipt['profile'] == binding['device_profile'],
                             'request device receipt profile/identity mismatch')
             require(result['power']['profile'] == binding['power_profile'], 'actual collector profile mismatch')
-        audit_policy(result, repository)
+        if current:
+            require(result.get('schema_version') == 'kvolt-request-result-v2', 'missing current TPOT request schema')
+        audit_policy(result, repository, expected_policy=policy)
         require(energy['valid'] is True and not result['power']['errors'], 'invalid collected power')
         power = result['power']
         raw_path = artifact(root, power['raw_path'])

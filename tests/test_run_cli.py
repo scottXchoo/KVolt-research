@@ -12,6 +12,7 @@ import pytest
 from kvolt_runtime.config import SNAPSHOT
 from kvolt_runtime.execution.contracts import PreparationError
 from kvolt_runtime.policy.mock import MockLUTRepository
+from kvolt_runtime.policy.tpot import tpot_policy
 
 
 def arguments(tmp_path, *extra):
@@ -77,7 +78,7 @@ def factories(events, *, busy=False):
                    device_profile=lambda path: SimpleNamespace(as_dict=lambda: {'test': True}),
                    decode_controller=decode, hardware_lock=lambda: lock,
                    backend=backend, device=device, runner=Runner,
-                   runtime_metadata=lambda: {'test': True}), lock
+                   runtime_metadata=lambda: {'test': True, 'tpot_policy': tpot_policy()}), lock
 
 
 def test_new_help_and_import_have_no_gpu_or_science_imports():

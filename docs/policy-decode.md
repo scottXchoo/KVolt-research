@@ -26,8 +26,13 @@ endpoints and multiple Knees are preserved. An empty supported container returns
 results: normal empty/flat results activate the median G, while detector recovery
 activates all G.
 
-`DecodeController(repo, knee_adapter=None, *, clock=time.monotonic_ns)` constructs
-the actual adapter by default. `choose(L,nmax,first_token_id,t1_ns)` validates
+`DecodeController(repo, knee_adapter=None, *, clock=time.monotonic_ns,
+tpot_buffer_ratio=MISSING)` constructs
+the actual adapter by default and snapshots `config.TPOT_BUFFER_RATIO` (default
+`0.20`) for this controller. Change that single global value and start a new
+process to use another allowance. The ratio must be a finite nonnegative number;
+booleans, strings, nonfinite values and an overflowing effective target fail.
+`choose(L,nmax,first_token_id,t1_ns)` validates
 strict integer L in `[1024,8192]`, Nmax in `[1,512]`, first token in `[0,128255]`,
 and nonnegative integer t1. EOS IDs are `(128001,128008,128009)`. First EOS or
 Nmax 1 returns `status='skipped'`, `selection_path='skipped'` and
@@ -37,13 +42,23 @@ td, Knee and feasibility are null; Quality and candidates are empty. It preserve
 the supplied t1.
 
 The active online order is Quality lookup, Knee detection and active G selection,
-`repo.decode_target(L)` Reference lookup, td clock, elapsed/budget calculation,
+`repo.decode_target(L)` raw Reference lookup, one buffer multiplication, td clock, elapsed/budget calculation,
 `repo.decode_within_budget(L, groups, budget_s)`, then energy selection:
 
 ```python
+reference_target_s = repo.decode_target(L)
+target_s = reference_target_s * (1.0 + tpot_buffer_ratio)
 elapsed_ns = td_ns - t1_ns
 budget_s = target_s - (elapsed_ns / 1_000_000_000) / (nmax - 1)
 ```
+
+This 2026-11-09 user decision sets the default TPOT allowance to +20%. The
+repository continues to return immutable raw FP16 Reference values. Length
+interpolation precedes the single multiplication; predictions, Quality, energy
+and TTFT are unchanged. Active decisions record `reference_target_s`,
+`tpot_buffer_ratio` and effective `target_s`. Actual SLO comparison is inclusive:
+`mean_tpot_s <= target_s`. Packing is already in measured TPOT and is not added
+again. A larger allowance can change the selected G/f; it is not a runtime speedup.
 
 This 2026-11-08 user revision supersedes Method's Decode-before-td order.
 Integer subtraction precedes conversion to seconds. The positive finite target
@@ -100,7 +115,7 @@ actual measured SLO result.
 
 Active decisions use `status='selected'` and selection path `energy_min` or
 `latency_fallback`. The frozen decision preserves raw Quality predictions, Knee
-status, target, budget, integer times, selected Quality, and only the queried
+status, raw Reference, buffer ratio, effective target, budget, integer times, selected Quality, and only the queried
 detail candidates (1..40). `selection_rule="budget_filtered_decode"` marks this
 contract, including skipped decisions. Historical unmarked traces retain their
 full-40 interpretation. Flags describe the original active G/time filter even

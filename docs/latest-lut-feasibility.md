@@ -1,5 +1,12 @@
 # Latest LUT feasibility and TPOT remedies
 
+The tables and GPU observations below are historical zero-buffer results.
+Current `latest_tpot_audit.py` applies the global `config.TPOT_BUFFER_RATIO`
+(default `0.20`) to the unchanged raw FP16 Reference before feasibility checks,
+and records raw Reference, ratio and effective target separately. Re-running
+the commands therefore uses the current allowance. It does not reclassify the
+archived measured runs or establish faster execution under the changed policy.
+
 ## Scope and reproducibility
 
 This audit uses all **320 latest AGX1 Decode predictions**, the latest 64 Prefill

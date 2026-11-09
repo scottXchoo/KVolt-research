@@ -24,6 +24,14 @@ predictions for another length. Unobserved lengths retain the baseline's length
 interpolation. No frequency/group interpolation or length extrapolation is added.
 Quality and frozen FP16 Reference targets remain unchanged.
 
+The global `config.TPOT_BUFFER_RATIO=0.20` changes the allowed TPOT threshold,
+not these observations or predictions. DC applies it once to the raw Reference
+after interpolation; the actual SLO uses the same effective threshold. The
+Runtime policy version/ratio is part of the Online context identity, so a state
+from a different source or buffer policy cannot silently be reused. Change the
+global setting before starting a new process. Feedback retains unscaled actual
+measurements even when the new threshold classifies them as a pass.
+
 A valid SLO miss remains an observation. Incomplete generation and invalid timing
 do not update the predictor. A restoration-only failure after completed valid
 measurements remains eligible. Missing or invalid energy does not overwrite

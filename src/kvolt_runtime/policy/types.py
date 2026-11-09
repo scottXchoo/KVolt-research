@@ -310,3 +310,5 @@ class DecodeDecision:
     td_ns: int | None = None
     skip_reason: str | None = None
     selection_rule: str = 'budget_filtered_decode'
+    reference_target_s: float | None = None
+    tpot_buffer_ratio: float | None = None

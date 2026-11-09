@@ -204,6 +204,9 @@ def test_first_token_stop_skips_real_dc_and_pack(tmp_path, nmax, first, reason):
 
 def test_decision_serialization_follows_final_token_without_changing_measurements(tmp_path, monkeypatch):
     import kvolt_runtime.execution.runner as runner_module
+    from kvolt_runtime import config
+    # Preserve this historical 33-row serialization/measurement boundary fixture.
+    monkeypatch.setattr(config, 'TPOT_BUFFER_RATIO', 0.0)
     runner, prepared, options, backend, events, _, _ = setup(
         tmp_path, knee=Adapter([], result=KneeResult('error_recovered', reason='test_recovery')))
     original_asdict = runner_module.asdict

@@ -105,15 +105,20 @@ def policy_scenarios(repo, elapsed_ns=DEFAULT_ELAPSED_NS, nmax_values=DEFAULT_NM
 def build_report(latest_dir, reference_lut_dir, *, elapsed_ns=DEFAULT_ELAPSED_NS,
                  nmax_values=DEFAULT_NMAX, run_policy=True):
     from kvolt_runtime.policy.types import PolicyDependencyError
+    from kvolt_runtime.config import buffered_tpot_target, resolve_tpot_buffer_ratio
     validate_scenarios(elapsed_ns, nmax_values)
     latest, reference = Path(latest_dir).resolve(), Path(reference_lut_dir).resolve()
     repo = load_repository(latest, reference)
     metadata = json.loads(repo.provenance.metadata_json)
     rows = []
+    buffer_ratio = resolve_tpot_buffer_ratio()
     for length in LENGTHS:
         repo.preflight(length)
-        rows.append({'length': length, 'target_s': repo.decode_target(length),
-                     'all40': summarize_decode(repo.decode(length), repo.decode_target(length))})
+        raw_reference = repo.decode_target(length)
+        effective = buffered_tpot_target(raw_reference, buffer_ratio)
+        rows.append({'length': length, 'reference_target_s': raw_reference,
+                     'tpot_buffer_ratio': buffer_ratio, 'target_s': effective,
+                     'all40': summarize_decode(repo.decode(length), effective)})
     execution = {'status': 'not_requested', 'engine': 'real PrefillController/DecodeController with pinned KneeAdapter',
                  'clock_kind': 'fixed assumed elapsed', 'elapsed_is_measured': False,
                  'assumed_elapsed_ns': list(elapsed_ns), 'nmax_values': list(nmax_values)}
@@ -131,7 +136,8 @@ def build_report(latest_dir, reference_lut_dir, *, elapsed_ns=DEFAULT_ELAPSED_NS
                         'target_source_device': metadata.get('target_source_device', target.get('source_device')),
                         'device_mismatch': metadata['cross_device_reference'], 'formal_qualification': False,
                         'runtime_accuracy_validated': False, 'actual_slo_validated': False,
-                        'target_policy': 'unchanged explicit pinned AGX2 FP16 R_d; separate from compact predictions',
+                        'target_policy': 'raw pinned AGX2 FP16 R_d times (1 + global TPOT buffer ratio)',
+                        'tpot_buffer_ratio': buffer_ratio,
                         'comparison': 'unrounded binary64 <=; displayed units do not affect comparisons'},
             'inputs': {'latest_dir': str(latest), 'reference_lut_dir': str(reference),
                        'latest_files_sha256': {name: hashlib.sha256((latest / name).read_bytes()).hexdigest()

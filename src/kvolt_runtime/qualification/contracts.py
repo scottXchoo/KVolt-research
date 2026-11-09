@@ -94,6 +94,7 @@ def qualification_binding(*, repo, device_profile, power_profile, native_profile
     """
     from ..backend.provenance import MODEL_FILES, SOURCE_HASHES, native_build_hashes, VERSIONS
     from ..config import SNAPSHOT
+    from ..policy.tpot import tpot_policy, validate_tpot_policy
     if native_profile != 'agx2' or repo.provenance.kind != 'measured':
         raise ContractError('formal qualification requires measured AGX2 data and native profile')
     if repo.provenance.source_device.casefold() != 'agx2' or power_profile is None:
@@ -109,7 +110,11 @@ def qualification_binding(*, repo, device_profile, power_profile, native_profile
     if required != POLICY_VERSIONS or any(runtime.get('installed_distribution_versions', {}).get(name) != version
                                              for name, version in required.items()):
         raise ContractError('formal qualification requires pinned installed policy dependencies')
+    policy = validate_tpot_policy(runtime.get('tpot_policy'))
+    if policy != tpot_policy():
+        raise ContractError('qualification TPOT buffer policy differs from current configuration')
     return {
+        'tpot_policy': policy,
         'runtime_source_sha256': runtime['source_sha256'],
         'python': runtime['python'], 'platform': runtime['platform'],
         'python_executable': sys.executable, 'LD_LIBRARY_PATH': os.environ.get('LD_LIBRARY_PATH'),

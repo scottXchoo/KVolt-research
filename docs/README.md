@@ -4,6 +4,8 @@
 [도구 안내](../tools/README.md) · [로컬 결과 안내](../artifacts/README.md)
 
 최신 기본 선택은 `data/luts/current/selection.json`, 개발 실행 기본값은 Online 보정이다.
+TPOT 허용 상한은 원 Reference의 기본1.20배이며 `config.py`의 `TPOT_BUFFER_RATIO`로
+변경한다. 원본 표·TTFT는 보존하고 소스/비율별 qualification을 구분한다.
 먼저 LUT 안내와 [Online 계약](online-lut.md)을 읽는다. 기존 단계별 문서에는 이전
 명시 LUT·동결 개발 예제가 남아 있으므로 해당 시점의 범위를 함께 확인한다.
 

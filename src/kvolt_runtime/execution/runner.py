@@ -9,10 +9,11 @@ import hashlib
 import time
 import uuid
 
-from ..config import GROUPS, RuntimeConfig
+from ..config import GROUPS, RuntimeConfig, buffered_tpot_target
 from ..contracts import CacheFormat, RequestSpec, generation_stop
 from ..errors import ContractError
 from ..policy.prefill import PrefillController
+from ..policy.tpot import tpot_policy, validate_tpot_policy
 from ..recording import request_record, to_json_native
 from ..telemetry.memory import RequestMemoryMonitor, no_memory
 from .contracts import (
@@ -39,8 +40,8 @@ def _invalidate_energy(energy):
                   reason=reason if reason not in (None, 'not_collected') else 'collector_failure')
 
 
-def _new_result(prepared, index):
-    return {'schema_version': 'kvolt-request-result-v1',
+def _new_result(prepared, index, policy):
+    return {'schema_version': 'kvolt-request-result-v2', 'tpot_policy': dict(policy),
             'request': request_record(prepared, index=index),
             'generation': {'status': 'not_run', 'token_ids': [], 'token_ready_ns': [],
                            'n_output_tokens': 0, 'stop_reason': None,
@@ -68,6 +69,7 @@ class SessionRunner:
                  emit=None, warmup=True, qualification=None):
         self.backend, self.repo, self.device, self.recorder = backend, repo, device, recorder
         self.dc, self.clock = decode_controller, clock
+        self.tpot_policy = tpot_policy(self.dc.tpot_buffer_ratio)
         self.pc = PrefillController(repo, clock=clock)
         self.stop = stop if stop is not None else StopController()
         self.collector_factory, self.emit = collector_factory, emit or (lambda record: None)
@@ -89,6 +91,9 @@ class SessionRunner:
         grant = self.qualification
         grant.assert_requests(prepared)
         binding = grant.binding
+        if (validate_tpot_policy(binding.get('tpot_policy')) != self.tpot_policy
+                or self.tpot_policy != tpot_policy()):
+            raise ContractError('runtime TPOT buffer policy differs from qualification')
         source = self.repo.provenance
         if (source.kind != 'measured'
                 or canonical_json(_lut_binding(source)) != canonical_json(binding.get('lut'))):
@@ -211,7 +216,7 @@ class SessionRunner:
 
     def _request(self, item, index, snapshot, collect_power):
         from ..telemetry import energy_metrics, timing_metrics
-        result = _new_result(item, index)
+        result = _new_result(item, index, self.tpot_policy)
         generation, errors = result['generation'], result['errors']
         cache = collector = memory = None
         pc = dc = None
@@ -270,6 +275,11 @@ class SessionRunner:
                     # no Q/LUT/clock work in that branch and no packing follows it.
                     stage = 'decode_controller'
                     dc = self.dc.choose(item.spec.length, item.spec.nmax, first.token_id, first.ready_ns)
+                    if dc.status != 'skipped':
+                        if (dc.tpot_buffer_ratio != self.tpot_policy['ratio']
+                                or dc.target_s != buffered_tpot_target(
+                                    dc.reference_target_s, self.tpot_policy['ratio'])):
+                            raise ContractError('Decode decision differs from session TPOT buffer policy')
                     if stop is None:
                         if dc.status == 'skipped' or dc.selected is None:
                             raise ExecutionError('DC_CONTRACT', stage, 'active Decode has no selected setting')
@@ -467,17 +477,27 @@ class SessionRunner:
         session['request_records'].append(record)
 
     def run(self, prepared, options, *, provenance=None, session_id=None):
-        session = {'schema_version': 'kvolt-session-v1', 'session_id': session_id or uuid.uuid4().hex,
+        session = {'schema_version': 'kvolt-session-v2', 'session_id': session_id or uuid.uuid4().hex,
                    'status': 'failed', 'mode': options.mode, 'collect_power': options.collect_power,
                    'started_ns': self.clock(), 'provenance': provenance or {}, 'errors': [],
-                   'request_records': [], 'results': [], 'exit_code': EXIT_OK}
+                   'request_records': [], 'results': [], 'exit_code': EXIT_OK,
+                   'tpot_policy': dict(self.tpot_policy)}
         snapshot = None
-        stage = 'device_preparation'
+        stage = 'tpot_policy'
         try:
+            if tpot_policy(self.dc.tpot_buffer_ratio) != self.tpot_policy:
+                raise ContractError('Decode controller TPOT buffer policy changed during session')
+            runtime = session['provenance'].setdefault('runtime', {'tpot_policy': dict(self.tpot_policy)})
+            if (type(runtime) is not dict
+                    or validate_tpot_policy(runtime.get('tpot_policy')) != self.tpot_policy):
+                raise ContractError('runtime metadata differs from controller TPOT buffer policy')
+            stage = 'device_preparation'
             if options.mode == 'performance':
                 stage = 'qualification'
                 self._performance_gate(prepared, options, provenance or {})
                 session['qualification'] = self.qualification.as_dict()
+            if self.dc.repo is not self.repo:
+                raise ContractError('Decode controller repository differs from session source')
             if self.online is not None:
                 stage = 'online_lut_initial_save'
                 online_provenance = session['provenance'].setdefault('online_lut', {})
@@ -562,7 +582,7 @@ class SessionRunner:
                 session['exit_code'] = self.stop.exit_code
             for index in range(len(session['results']), len(prepared.requests)):
                 item = prepared.requests[index]
-                result = _new_result(item, index)
+                result = _new_result(item, index, self.tpot_policy)
                 result['not_run_reason'] = 'session_interrupted' if self.stop.requested else 'session_aborted'
                 session['results'].append(result)
                 try:

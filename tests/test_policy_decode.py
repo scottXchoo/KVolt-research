@@ -13,6 +13,13 @@ from kvolt_runtime.policy.types import (
 )
 
 
+@pytest.fixture(autouse=True)
+def historical_strict_tpot_policy(monkeypatch):
+    """These manually specified selections cover the historical zero-buffer rule."""
+    from kvolt_runtime import config
+    monkeypatch.setattr(config, 'TPOT_BUFFER_RATIO', 0.0)
+
+
 class Repo:
     def __init__(self, scores=(0.9, 0.8, 0.7, 0.6, 0.5), target=2.0):
         self.calls = []

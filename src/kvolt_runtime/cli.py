@@ -115,6 +115,7 @@ def _source_metadata(provenance):
 
 
 def _runtime_metadata():
+    from .policy.tpot import tpot_policy
     package = Path(__file__).resolve().parent
     hashes = {str(path.relative_to(package)): hashlib.sha256(path.read_bytes()).hexdigest()
               for path in sorted(package.rglob('*.py'))}
@@ -144,6 +145,7 @@ def _runtime_metadata():
         except metadata.PackageNotFoundError:
             installed[name] = None
     return {
+        'tpot_policy': tpot_policy(),
         'python': platform.python_version(),
         'python_implementation': platform.python_implementation(),
         'platform': platform.platform(),

@@ -161,7 +161,7 @@ def grant_for(runner, collector):
     profile = SimpleNamespace(as_dict=lambda: {'profile': 'device-v1'})
     runner.device.profile = profile
     collector.profile = SimpleNamespace(to_dict=lambda: {'profile': 'power-v1'})
-    binding = {'identity': {'physical_id_sha256': 'a' * 64, 'boot_id': 'boot'},
+    binding = {'tpot_policy': dict(runner.tpot_policy), 'identity': {'physical_id_sha256': 'a' * 64, 'boot_id': 'boot'},
                'native_profile': 'agx2', 'device_profile': profile.as_dict(),
                'power_profile': collector.profile.to_dict(),
                'lut': {name: getattr(source, name) for name in

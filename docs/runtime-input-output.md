@@ -48,6 +48,16 @@ explicit while preserving request order and metadata.
 
 ## Session storage
 
+Current Runner output uses `kvolt-session-v2` and `kvolt-request-result-v2`.
+Both preserve `tpot_policy = {version: "reference-buffer-v1", ratio: 0.20}`;
+runtime provenance records the same policy. Active Decode decisions include
+`reference_target_s` (raw FP16), `tpot_buffer_ratio`, and `target_s` (allowed
+TPOT after one multiplication). N=1/EOS skip target fields remain null.
+`slo.mean_tpot_met` compares actual mean TPOT inclusively with this effective
+target. The auditor requires matching current policy fields and rejects a
+missing or inconsistent identity. Historical v1 evidence retains the recorded
+zero-buffer interpretation; it is not reclassified by the current global value.
+
 `recording.SessionRecorder(output_dir)` performs exclusive directory creation.
 An existing directory, regular file, symlink or dangling symlink raises a
 conflict. The parent must already exist. A rejected output location receives

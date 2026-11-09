@@ -10,6 +10,14 @@ physical AGX2 identity and boot ID, runtime and reference measured LUT hashes, d
 and power profile. Source/profile/device changes require matching new evidence.
 The original LUT's `runtime_eligible=false` flags are never rewritten.
 
+The current TPOT policy also binds the effective allowance: the global
+`config.TPOT_BUFFER_RATIO` defaults to `0.20`, so the allowed actual TPOT is the
+raw FP16 Reference multiplied by `1.20`. DC selection and measured SLO use that
+same threshold. Runtime metadata records the policy version and ratio; a grant
+for the old source, strict target, or a different ratio cannot qualify this
+policy. Historical reports retain their original zero-buffer results. Changing
+the allowance does not establish faster inference or a fresh GPU qualification.
+
 The report loader uses only the standard library. It verifies every required
 machine-check summary, all referenced artifacts and their SHA-256s, and exact
 binding equality. Artifact paths cannot leave the report directory or traverse

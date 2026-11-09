@@ -1,12 +1,13 @@
 """CPU-only Decode selection at the first-token phase boundary."""
 import time
 
-from ..config import EOS_TOKEN_IDS, GROUPS, require_int
+from ..config import (EOS_TOKEN_IDS, GROUPS, MISSING, buffered_tpot_target,
+                      require_int, resolve_tpot_buffer_ratio)
 from ..errors import ContractError
 from .knee import KneeAdapter, validate_quality
 from .types import (
     Bracket, DecodeCandidate, DecodeDecision, DecodePrediction, FREQUENCIES_MHZ,
-    KneeResult, LUTRepository, elapsed_since, finite, length as validate_length,
+    KneeResult, LUTRepository, elapsed_since, length as validate_length,
 )
 
 
@@ -42,10 +43,17 @@ class DecodeController:
     caches per-request interpolation/detection nor changes device state.
     """
 
-    def __init__(self, repo: LUTRepository, knee_adapter=None, *, clock=time.monotonic_ns):
+    def __init__(self, repo: LUTRepository, knee_adapter=None, *, clock=time.monotonic_ns,
+                 tpot_buffer_ratio=MISSING):
+        self._tpot_buffer_ratio = resolve_tpot_buffer_ratio(tpot_buffer_ratio)
         self.repo = repo
         self.knee_adapter = KneeAdapter() if knee_adapter is None else knee_adapter
         self.clock = clock
+
+    @property
+    def tpot_buffer_ratio(self):
+        """Policy snapshot fixed for this controller/session."""
+        return self._tpot_buffer_ratio
 
     def choose(self, length: int, nmax: int, first_token_id: int, t1_ns: int) -> DecodeDecision:
         validate_length(length)
@@ -69,7 +77,8 @@ class DecodeController:
             active = {sorted(GROUPS)[len(GROUPS) // 2]}
         else:
             active = set(GROUPS)
-        target = finite(self.repo.decode_target(length), 'Decode target seconds/token', positive=True)
+        reference_target = self.repo.decode_target(length)
+        target = buffered_tpot_target(reference_target, self.tpot_buffer_ratio)
         td_ns = self.clock()
         elapsed_ns = elapsed_since(t1_ns, td_ns)
         budget = target - (elapsed_ns / 1_000_000_000) / (nmax - 1)
@@ -115,4 +124,5 @@ class DecodeController:
             status='selected', selection_path=selection_path, selected=selected,
             selected_quality=scores[selected.group], target_s=target, budget_s=budget,
             elapsed_ns=elapsed_ns, predicted_feasible=selected.tpot_s <= budget,
-            quality=quality, knee=knee, candidates=tuple(candidates), t1_ns=t1_ns, td_ns=td_ns)
+            quality=quality, knee=knee, candidates=tuple(candidates), t1_ns=t1_ns, td_ns=td_ns,
+            reference_target_s=float(reference_target), tpot_buffer_ratio=self.tpot_buffer_ratio)

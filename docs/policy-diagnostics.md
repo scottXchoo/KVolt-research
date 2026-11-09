@@ -1,5 +1,12 @@
 # M2 CPU policy diagnostics
 
+Current diagnostics snapshot `config.TPOT_BUFFER_RATIO=0.20`. Raw Reference
+lookup remains unchanged; active DC records `reference_target_s`,
+`tpot_buffer_ratio`, and the effective `target_s = raw * (1 + ratio)` used for
+candidate feasibility. TTFT is unscaled. Change the global value and start a
+new diagnostic process to select another allowance. These remain predictions;
+the buffer does not establish actual SLO attainment or a runtime speedup.
+
 `kvolt diagnose` predicts the PC/DC choices for an assumed input length, output
 cap, first token and elapsed phase times. It performs no tokenization, inference,
 GPU frequency operation, device lock or power collection. `run` belongs to M3

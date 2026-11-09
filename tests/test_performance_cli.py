@@ -70,7 +70,8 @@ def performance(tmp_path):
         interval_ns=1_000_000, max_gap_ns=10**12, ready_timeout_ns=10**9,
         coverage_timeout_ns=10**9, join_timeout_ns=10**9)
     versions = {'numpy': '1.26.4', 'scipy': '1.15.3', 'kneed': '0.9.0'}
-    runtime = {'source_worktree_dirty': False, 'source_sha256': {'fixture.py': 'a' * 64},
+    from kvolt_runtime.policy.tpot import tpot_policy
+    runtime = {'tpot_policy': tpot_policy(), 'source_worktree_dirty': False, 'source_sha256': {'fixture.py': 'a' * 64},
                'python': 'cpu-fixture', 'platform': 'cpu-fixture',
                'required_policy_versions': versions, 'installed_distribution_versions': dict(versions)}
     binding = qualification_binding(repo=repo, device_profile=device_profile,
@@ -559,3 +560,46 @@ assert not ({'torch','transformers','triton','flash_attn','numpy','scipy','kneed
     result = subprocess.run([sys.executable, '-c', code], text=True, capture_output=True, env=environment)
     assert result.returncode == 0, result.stderr
     assert '--qualification' in result.stdout and 'formal' in result.stdout
+
+
+@pytest.mark.parametrize('stale_ratio', [None, 0.0, .1, .3])
+def test_tpot_policy_stale_grant_rejected_before_hardware(performance, capsys, stale_ratio):
+    from kvolt_runtime.policy.tpot import tpot_policy
+    from kvolt_runtime.run_cli import main
+    fixture = performance
+    binding = copy.deepcopy(fixture.binding)
+    if stale_ratio is None:
+        binding.pop('tpot_policy')
+    else:
+        binding['tpot_policy'] = tpot_policy(stale_ratio)
+    report = write_report(fixture.report.parent.parent/'stale-tpot-evidence', binding, {'1024': 4})
+    args = list(fixture.args)
+    args[args.index('--qualification')+1] = str(report)
+    assert main(args, factories=fixture.seam) == 2
+    assert not any(event in fixture.events for event in ('lock', 'capture', 'load', 'power_start'))
+    assert stdout_records(capsys)[-1]['errors'][0]['stage'] == 'qualification'
+
+
+def test_global_tpot_ratio_change_invalidates_old_runtime_evidence(performance, capsys, monkeypatch):
+    from kvolt_runtime import config
+    from kvolt_runtime.run_cli import main
+    fixture = performance
+    monkeypatch.setattr(config, 'TPOT_BUFFER_RATIO', .3)
+    assert main(fixture.args, factories=fixture.seam) == 2
+    assert not any(event in fixture.events for event in ('lock', 'capture', 'load', 'power_start'))
+    assert 'TPOT buffer policy' in stdout_records(capsys)[-1]['errors'][0]['message']
+
+
+def test_direct_runner_refuses_grant_after_global_policy_change(performance, monkeypatch):
+    from kvolt_runtime import config
+    from kvolt_runtime.run_cli import main
+    fixture = performance
+    original = fixture.seam.runner
+    def changed_after_preflight(**kwargs):
+        # Simulate a global edit after CLI qualification binding was accepted.
+        runner = original(**kwargs)
+        monkeypatch.setattr(config, 'TPOT_BUFFER_RATIO', .3)
+        return runner
+    assert main(fixture.args, factories=replace(fixture.seam, runner=changed_after_preflight),
+                emit=lambda _: None) == 2
+    assert not any(event in fixture.events for event in ('capture', 'load', 'power_start'))

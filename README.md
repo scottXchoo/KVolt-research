@@ -45,6 +45,13 @@ source checkout에서는 작업 디렉터리와 무관하게 같은 선택을 �
 `latest/`는 이전 AGX1 재현용이며 현재 기본값이 아니다.
 버전별 LUT·manifest·참조 원본은 그대로 보존한다.
 
+TPOT 통과 상한은 **원 FP16 Reference × 1.20**이다. 전역 설정
+[`TPOT_BUFFER_RATIO = 0.20`](src/kvolt_runtime/config.py)을 바꾸고 새 프로세스를
+시작하면 모든 길이의 DC 예산·후보 선택과 실제 TPOT 판정에 같은 비율이 적용된다.
+`0.0`은 원 기준, `0.10`은 +10%, `0.30`은 +30%다. TTFT와 원본 LUT/Reference는
+보존한다. 버퍼를 늘리는 것은 허용 지연 변경이며 연산 속도 향상이 아니다.
+소스/비율이 바뀌면 기존 qualification을 재사용할 수 없다.
+
 개발 `run`은 Offline LUT를 초기값으로 하는 별도 Online 보정 표를 기본 사용한다.
 정상 실측을 EMA(기본 α=0.1)로 반영하고 다음 요청부터 사용한다.
 Quality·FP16 목표·원본 LUT는 바꾸지 않는다. `--no-online-lut`로 동결 실행을 선택한다.
