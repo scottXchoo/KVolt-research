@@ -1,5 +1,6 @@
 # Local experiment outputs and copied backend snapshots
-/artifacts/
+/artifacts/*
+!/artifacts/README.md
 
 # Python bytecode and test caches
 __pycache__/
