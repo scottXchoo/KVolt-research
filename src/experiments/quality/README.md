@@ -2,6 +2,9 @@
 
 데이터셋과 평가 지표를 정하기 전의 최소 스켈레톤이다. `run.py` 상단에서 모델과 K/V bits, group size, residual length, 출력 상한을 바꾼다. 기본은 **base `meta-llama/Llama-3.1-8B`**, FP16 가중치, K2V2, G=32, residual=128이다.
 
+모델 로딩·생성은 공통 [src/model/kivi_llama.py](../../model/kivi_llama.py)에 있다. 다른 실험에서도 `from model.kivi_llama import load_model, generate`로 가져와 `load_model(model_name, group_size=32)`와 `generate(model, tokenizer, prompt, max_new_tokens=128)`을 사용한다.
+`quality/run.py`에는 실험 설정, 데이터 로딩·채점 TODO와 실행 흐름을 둔다.
+
 1. `load_dataset()`을 구현해 `[{"prompt": "...", "answer": "..."}]`를 반환한다. `prompt`에는 base 모델에 줄 완성된 입력만 넣고 정답은 분리한다.
 2. `score(prediction, answer)`에 선택한 데이터셋의 평가 지표를 구현한다.
 3. 저장소 루트에서 실행한다.
