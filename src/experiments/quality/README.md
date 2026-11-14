@@ -17,4 +17,8 @@ CUDA와 프로젝트 호환 PyTorch·Transformers·FlashAttention·Triton·Accel
 
 모델은 저장소의 `LlamaForCausalLM_KIVI`를 사용한다. 생성은 batch 1·greedy·자연 EOS이며 새 토큰만 디코드한다. 공통 helper는 chat template를 자동 적용하지 않고 로더가 준비한 입력을 그대로 사용한다. 별도 [GSM8K 실행기](GSM8K/README.md)는 기존 고정 plain-text 5-shot protocol을 사용한다.
 
+[RULER 실행기](RULER/README.md)는 `RULER/dataset/`의 고정 대표 합성 입력을 사용한다.
+NIAH 2종·변수 추적·빈도 추출의 4과제이며, 데이터 검증·과제 선택·생성·부분 정답 채점과
+결과 저장을 제공한다. 전체 RULER 벤치마크나 기존 Quality LUT의 평가 입력을 대신하지 않는다.
+
 기본 실행은 모델 로딩 전에 데이터셋 TODO로 중단한다. 실제 GPU 추론과 Quality 점수는 미측정이다. 정식 연구의 Instruct/RULER 평가와 별도이며 기존 LUT·Runtime 적격성을 변경하지 않는다.
