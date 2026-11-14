@@ -14,6 +14,7 @@ policy = ["numpy==1.26.4", "scipy==1.15.3", "kneed==0.9.0"]
 
 [project.scripts]
 kvolt = "kvolt_runtime.cli:main"
+experiment-control = "experiment_control.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

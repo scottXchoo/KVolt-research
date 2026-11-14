@@ -1,0 +1,22 @@
+{
+  "schema": "experiment-control.profile.v1",
+  "lock_path": "/run/lock/kvolt-p3-hardware.lock",
+  "controls": [
+    {"kind": "power_mode", "expected_id": 0, "expected_name": "MAXN"},
+    {
+      "kind": "clock", "name": "cpu-policy0",
+      "path": "/sys/devices/system/cpu/cpufreq/policy0",
+      "minimum": 2201600, "maximum": 2201600,
+      "min_file": "scaling_min_freq", "max_file": "scaling_max_freq",
+      "governor_file": "scaling_governor", "current_file": "scaling_cur_freq"
+    }
+  ],
+  "probes": [{"kind": "linux", "name": "linux"}],
+  "rules": [
+    {"probe": "linux", "metric": "clock.cpu.policy0.min_hz", "expected": 2201600000},
+    {"probe": "linux", "metric": "clock.cpu.policy0.max_hz", "expected": 2201600000},
+    {"probe": "linux", "metric": "vm.pswpin", "max_increase": 0},
+    {"probe": "linux", "metric": "vm.pswpout", "max_increase": 0}
+  ],
+  "session": {"sample_interval_s": 0.2, "ready_timeout_s": 10, "on_violation": "raise"}
+}

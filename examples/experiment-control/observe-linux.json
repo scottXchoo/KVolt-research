@@ -1,0 +1,12 @@
+{
+  "schema": "experiment-control.profile.v1",
+  "controls": [],
+  "probes": [{"kind": "linux", "name": "linux"}],
+  "rules": [],
+  "session": {
+    "sample_interval_s": 0.2,
+    "ready_timeout_s": 0,
+    "stable_for_s": 0,
+    "on_violation": "record"
+  }
+}
