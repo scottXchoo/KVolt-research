@@ -50,6 +50,7 @@ def run(output_dir: str | Path, *, limit: int | None = None, model_name: str = M
         # carries different generation defaults. Keep the pinned one-output flow.
         model.generation_config.num_return_sequences = 1
         model.generation_config.return_dict_in_generate = False
+        # Model Inference
         for record in selected:
             prediction = kivi_llama.generate(
                 model, tokenizer, record["prompt"], max_new_tokens=MAX_NEW_TOKENS,
@@ -84,6 +85,7 @@ def run(output_dir: str | Path, *, limit: int | None = None, model_name: str = M
     }
     with (output / "summary.json").open("x", encoding="utf-8") as stream:
         stream.write(json.dumps(summary, ensure_ascii=False, indent=2) + "\n")
+
     return summary
 
 
@@ -94,6 +96,7 @@ def _positive_int(value: str) -> int:
         raise argparse.ArgumentTypeError("limit must be a positive integer") from exc
     if result <= 0:
         raise argparse.ArgumentTypeError("limit must be a positive integer")
+
     return result
 
 
@@ -104,12 +107,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-dir", type=Path, help="new directory; must not already exist")
     args = parser.parse_args(argv)
     output = args.output_dir or Path("artifacts/gsm8k") / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+
     try:
         summary = run(output, limit=args.limit, model_name=args.model_name)
     except Exception as exc:
         print(f"GSM8K run failed: {exc}; partial results, if any: {output}", file=sys.stderr)
         return 1
     print(json.dumps({"output_dir": str(output), **summary}, ensure_ascii=False, indent=2))
+
     return 0
 
 
