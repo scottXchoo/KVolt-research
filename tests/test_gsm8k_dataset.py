@@ -19,7 +19,9 @@ BUNDLE = Path(dataset.__file__).resolve().parent
 def test_nested_bundle_layout_and_public_api():
     assert BUNDLE.name == "dataset"
     assert BUNDLE.parent.name == "GSM8K"
-    assert sorted(path.name for path in BUNDLE.parent.iterdir()) == ["dataset"]
+    assert sorted(path.name for path in BUNDLE.parent.iterdir() if path.name != "__pycache__") == [
+        "KIVI_Llama.py", "README.md", "dataset",
+    ]
     from experiments.quality.GSM8K.dataset import (
         PINNED_PROTOCOL_SHA256, PINNED_REVISION, PINNED_SOURCE_SHA256,
         extract_answer, load_dataset, main, score, validate_bundle,
