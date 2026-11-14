@@ -274,7 +274,13 @@ def _nonnegative_int(value: str) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if "--lm-eval" in arguments:
+        from experiments.lm_eval.runner import main as lm_eval_main
+        return lm_eval_main([arg for arg in arguments if arg != "--lm-eval"],
+                            default_tasks=("ruler",))
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--lm-eval", action="store_true", help="use all official lm-eval RULER tasks; --lm-eval --help for options")
     parser.add_argument("--task", choices=TASK_NAMES, help="one task; default: all four representative tasks")
     parser.add_argument("--limit", type=_positive_int, help="first N rows after task selection; default: all selected rows")
     parser.add_argument("--model-name", default=MODEL_NAME, help="Instruct model ID or local path; default: %(default)s")

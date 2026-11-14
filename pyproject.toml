@@ -11,6 +11,7 @@ dependencies = []
 
 [project.optional-dependencies]
 policy = ["numpy==1.26.4", "scipy==1.15.3", "kneed==0.9.0"]
+lm-eval = ["lm_eval[ruler]==0.4.12", "datasets==3.6.0", "huggingface-hub==0.36.0"]
 
 [project.scripts]
 kvolt = "kvolt_runtime.cli:main"

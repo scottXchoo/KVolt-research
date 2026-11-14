@@ -101,7 +101,13 @@ def _positive_int(value: str) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if "--lm-eval" in arguments:
+        from experiments.lm_eval.runner import main as lm_eval_main
+        return lm_eval_main([arg for arg in arguments if arg != "--lm-eval"],
+                            default_tasks=("gsm8k",))
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--lm-eval", action="store_true", help="use the pinned lm-eval evaluator; --lm-eval --help for its options")
     parser.add_argument("--limit", type=_positive_int, help="first N test rows; default: all 1319")
     parser.add_argument("--model-name", default=MODEL_NAME, help="Instruct model ID or local path; default: %(default)s")
     parser.add_argument("--output-dir", type=Path, help="new directory; must not already exist")

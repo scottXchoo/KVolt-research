@@ -1,5 +1,9 @@
 # RULER KIVI Llama 실행기
 
+공식 LM Evaluation Harness task는 명시적인 `--lm-eval`로 실행한다.
+설치·실제 stop·원 토큰·계측 계약은 [LM-Eval 안내](../../../../docs/lm-eval.md)를 따른다.
+아래는 기본 경로인 기존 고정 로컬 프로토콜이며 새 공식 task와 구분한다.
+
 `KIVI_Llama.py`는 NVIDIA/RULER legacy v1의 대표 4과제·40문항을 순서대로
 생성하고 공식 substring recall로 채점한다. 기본 모델은
 `meta-llama/Llama-3.1-8B-Instruct`이며 `model.kivi_llama.load_model/generate`를
