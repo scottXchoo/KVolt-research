@@ -13,6 +13,20 @@ HF 기본 backend/HFLM으로 모델을 로딩하지 않는다. loglikelihood·ro
 문항·few-shot·필터·stop·생성 상한이 다르면 같은 평가가 아니다.
 공식 데이터와 합성 자료 준비에는 네트워크·외부 cache가 필요할 수 있다.
 
+## 연결 구조
+
+```text
+KIVI_Llama.py --lm-eval 또는 python -m experiments.lm_eval
+  → runner.run_evaluation → lm_eval.evaluator.simple_evaluate
+  → KIVILM.generate_until → model.kivi_llama.generate_with_details
+  → vendor.llama_kivi.LlamaForCausalLM_KIVI의 model.generate
+```
+
+공식 task가 prompt·stop·생성 인자를 만들고 adapter가 요청마다 공통 생성 helper를
+호출한다. 선택 계측의 `EnergyMeter`는 요청 안에서 tokenization·H2D·실제 생성·raw
+decode·CUDA 완료를 감싼다. 반환 뒤 adapter의 원자료 저장과 harness의 필터·채점은
+계측 구간 밖이다. 기존 CLI는 `--lm-eval`이 없으면 기존 로컬 실행기를 계속 쓴다.
+
 ## 설치와 실행
 
 기존 CUDA·KIVI·PyTorch·Transformers 4.43.1 환경은 먼저 보존한다. 별도 환경에서
@@ -29,16 +43,20 @@ huggingface-hub==0.36.0
 FlashAttention·Triton·KIVI native 커널의 설치나 호환성 검증을 대신하지 않는다.
 실제 모델 로딩은 기존 `load_model`의 CUDA 경로를 유지한다.
 
-저장소 루트에서 준비된 별도 환경으로 실행한다. 새 결과 디렉터리를 지정한다.
+저장소 루트에서 준비된 별도 환경으로 실행한다. `/path/to/KIVI`는 기존
+`quant.new_pack`·`quant.matmul`을 제공하는 호환 KIVI checkout으로 바꾼다.
+`PYTHONPATH=src`만 지정하면 준비된 KIVI 경로를 덮어써 import가 실패할 수 있으므로
+프로젝트·KIVI 경로를 앞에 추가하고 기존 값을 보존한다. 새 결과 디렉터리를 지정한다.
 
 ```sh
+export PYTHONPATH="$PWD/src:/path/to/KIVI${PYTHONPATH:+:$PYTHONPATH}"
 python3 -m pip install '.[lm-eval]'
-PYTHONPATH=src python3 -m experiments.lm_eval \
+python3 -m experiments.lm_eval \
   --tasks gsm8k --limit 3 --seed 1234 \
   --group-size 32 --max-new-tokens 512 --max-input-tokens 8192 \
   --output-dir artifacts/lm-eval/gsm8k-smoke
 
-PYTHONPATH=src python3 -m experiments.lm_eval \
+python3 -m experiments.lm_eval \
   --tasks niah_single_1 --ruler-lengths 4096 --limit 3 \
   --max-new-tokens 128 --max-input-tokens 8192 \
   --output-dir artifacts/lm-eval/ruler-smoke
@@ -47,11 +65,32 @@ PYTHONPATH=src python3 -m experiments.lm_eval \
 기존 진입점의 명시적 선택 예시는 다음과 같다.
 
 ```sh
+export PYTHONPATH="$PWD/src:/path/to/KIVI${PYTHONPATH:+:$PYTHONPATH}"
 python3 src/experiments/quality/GSM8K/KIVI_Llama.py --lm-eval \
   --limit 3 --output-dir artifacts/lm-eval/gsm8k-legacy-entry
 python3 src/experiments/quality/RULER/KIVI_Llama.py --lm-eval \
   --tasks niah_single_1 --ruler-lengths 4096 --limit 3 \
   --output-dir artifacts/lm-eval/ruler-legacy-entry
+```
+
+Jetson에서는 기존 cuSPARSELt·CUDA 라이브러리의 `LD_LIBRARY_PATH`도 유지한다.
+평가용 별도 venv는 기존 GPU venv의 패키지나 이 라이브러리 경로를 교체하는 절차가 아니다.
+
+이번 AGX2 준비 환경의 정확한 경로를 사용한 예시는 다음과 같다. 동결 소스는
+`0f83e897dc33a5af634e7d140721de8fe79144b8`의 `src`·`pyproject.toml` 96파일이다.
+별도 `.venv`의 `kvolt-existing-gpu.pth`는
+`/mnt/kvolt-data/kvolt/.venv/lib/python3.10/site-packages`를 참조한다. 평가 의존성만
+별도 venv에 설치했으며 기존 GPU 패키지는 수정하지 않았다. 아래는 실행 예시이며
+실제 GPU 완료 기록이 아니다. 출력 경로가 이미 있으면 새 실행 이름을 지정한다.
+
+```sh
+cd /home/agx31/kvolt-lm-eval-0412-validation/source
+export PYTHONPATH="$PWD/src:/mnt/kvolt-data/kvolt/third_party/KIVI${PYTHONPATH:+:$PYTHONPATH}"
+export LD_LIBRARY_PATH="/mnt/kvolt-data/kvolt/.local/cusparselt/lib:/usr/local/cuda/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+/home/agx31/kvolt-lm-eval-0412-validation/.venv/bin/python -m experiments.lm_eval \
+  --tasks gsm8k --limit 1 \
+  --model-name /mnt/kvolt-data/kvolt/.cache/huggingface/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659 \
+  --output-dir /home/agx31/kvolt-lm-eval-0412-validation/results/gsm8k-example-01
 ```
 
 `--num-fewshot`을 생략하면 공식 task 설정을 쓴다. 기존 로컬 GSM8K train 첫 5문항과
@@ -144,6 +183,16 @@ CSV hash를 혼동하지 않는다. 생성 예외에 계측 결과/receipt가 �
 모델로 `simple_evaluate`·정답 채점·실제 stop에 따른 토큰 단축·원 N·요청 순서·trace
 저장·실패 보존을 검사한다. 공식 GSM8K/RULER task discovery는 dataset 다운로드나
 공식 benchmark 전체 실행 검증이 아니다.
+
+2026-11-14 macOS CPU 독립 검증은 관련 8파일 **251 pass·실패/skip 0**이다.
+compile·CLI help/import·문서 링크·공백 검증도 통과했다. 구현 커밋은 공통 생성
+`a7644ea3a0e7cbb364cd0f00615360ba90054698`, LM-Eval 연결
+`0f83e897dc33a5af634e7d140721de8fe79144b8`다.
+
+같은 날 AGX2는 별도 평가 venv 설치·동결 소스 96파일의 SHA 확인·Python 3.10 compile까지만
+완료했다. 다른 RULER 작업이 공통 hardware lock을 점유하고 있어 이 LM-Eval 경로의
+추가 GPU 생성·품질·실센서 계측은 아직 실행하지 않았다. 환경 준비나 compile을 실측으로
+표시하지 않는다.
 
 개발 CPU의 Torch 2.7.1·Transformers 4.57.3 검사는 GPU 환경의 Transformers 4.43.1·
 KIVI CUDA·native 커널·FlashAttention·실센서 호환성 검증을 대신하지 않는다.
