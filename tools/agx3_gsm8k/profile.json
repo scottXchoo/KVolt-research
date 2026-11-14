@@ -1,0 +1,139 @@
+{
+  "schema": "experiment-control.profile.v1",
+  "controls": [
+    {
+      "kind": "power_mode",
+      "expected_id": 0,
+      "expected_name": "MAXN"
+    },
+    {
+      "kind": "clock",
+      "name": "cpu-policy0",
+      "path": "/sys/devices/system/cpu/cpufreq/policy0",
+      "minimum": 2201600,
+      "maximum": 2201600,
+      "min_file": "scaling_min_freq",
+      "max_file": "scaling_max_freq",
+      "governor_file": "scaling_governor",
+      "current_file": "scaling_cur_freq",
+      "verify_current": true,
+      "timeout_s": 2,
+      "consecutive": 2
+    },
+    {
+      "kind": "clock",
+      "name": "cpu-policy4",
+      "path": "/sys/devices/system/cpu/cpufreq/policy4",
+      "minimum": 2201600,
+      "maximum": 2201600,
+      "min_file": "scaling_min_freq",
+      "max_file": "scaling_max_freq",
+      "governor_file": "scaling_governor",
+      "current_file": "scaling_cur_freq",
+      "verify_current": true,
+      "timeout_s": 2,
+      "consecutive": 2
+    },
+    {
+      "kind": "clock",
+      "name": "cpu-policy8",
+      "path": "/sys/devices/system/cpu/cpufreq/policy8",
+      "minimum": 2201600,
+      "maximum": 2201600,
+      "min_file": "scaling_min_freq",
+      "max_file": "scaling_max_freq",
+      "governor_file": "scaling_governor",
+      "current_file": "scaling_cur_freq",
+      "verify_current": true,
+      "timeout_s": 2,
+      "consecutive": 2
+    }
+  ],
+  "probes": [
+    {
+      "kind": "linux",
+      "name": "linux",
+      "gpu_path": "/sys/class/devfreq/17000000.gpu",
+      "emc_path": "/sys/kernel/debug/bpmp/debug/clk/emc/rate"
+    }
+  ],
+  "rules": [
+    {
+      "probe": "linux",
+      "metric": "clock.cpu.policy0.min_hz",
+      "expected": 2201600000
+    },
+    {
+      "probe": "linux",
+      "metric": "clock.cpu.policy0.max_hz",
+      "expected": 2201600000
+    },
+    {
+      "probe": "linux",
+      "metric": "clock.cpu.policy0.governor",
+      "expected": "schedutil"
+    },
+    {
+      "probe": "linux",
+      "metric": "clock.cpu.policy4.min_hz",
+      "expected": 2201600000
+    },
+    {
+      "probe": "linux",
+      "metric": "clock.cpu.policy4.max_hz",
+      "expected": 2201600000
+    },
+    {
+      "probe": "linux",
+      "metric": "clock.cpu.policy4.governor",
+      "expected": "schedutil"
+    },
+    {
+      "probe": "linux",
+      "metric": "clock.cpu.policy8.min_hz",
+      "expected": 2201600000
+    },
+    {
+      "probe": "linux",
+      "metric": "clock.cpu.policy8.max_hz",
+      "expected": 2201600000
+    },
+    {
+      "probe": "linux",
+      "metric": "clock.cpu.policy8.governor",
+      "expected": "schedutil"
+    },
+    {
+      "probe": "linux",
+      "metric": "clock.gpu.min_hz",
+      "expected": 306000000
+    },
+    {
+      "probe": "linux",
+      "metric": "clock.gpu.max_hz",
+      "expected": 1300500000
+    },
+    {
+      "probe": "linux",
+      "metric": "clock.gpu.governor",
+      "expected": "nvhost_podgov"
+    },
+    {
+      "probe": "linux",
+      "metric": "vm.pswpin",
+      "max_increase": 0
+    },
+    {
+      "probe": "linux",
+      "metric": "vm.pswpout",
+      "max_increase": 0
+    }
+  ],
+  "session": {
+    "sample_interval_s": 0.2,
+    "ready_timeout_s": 5,
+    "stable_for_s": 0,
+    "warmup_runs": 1,
+    "on_violation": "record"
+  }
+}
