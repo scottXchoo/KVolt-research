@@ -1,0 +1,54 @@
+{
+  "schema": "kvolt.gsm8k-cot-greedy.v1",
+  "dataset": "GSM8K",
+  "configuration": "main",
+  "evaluation": {
+    "split": "test",
+    "rows": 1319,
+    "order": "upstream JSONL order",
+    "id_template": "gsm8k/main/test/{index:04d}"
+  },
+  "few_shot": {
+    "split": "train",
+    "indices": [0, 1, 2, 3, 4],
+    "include_reference_solution": true,
+    "selection": "fixed local baseline; not a canonical GSM8K prompt"
+  },
+  "prompt": {
+    "format": "plain-text completion",
+    "instruction": "Solve each math word problem step by step. End each answer with a final line in the format #### <number>.",
+    "separator": "\n\n",
+    "example_template": "Question: {question}\nAnswer: {reference_solution}",
+    "target_template": "Question: {question}\nAnswer:",
+    "target_answer_in_prompt": false
+  },
+  "generation": {
+    "do_sample": false,
+    "num_beams": 1,
+    "num_return_sequences": 1,
+    "max_new_tokens": 512,
+    "use_cache": true
+  },
+  "stopping": "natural tokenizer/model EOS or max_new_tokens; no custom stop strings",
+  "tools": false,
+  "sampling_seed": null,
+  "scoring": {
+    "metric": "numeric-string exact match",
+    "extraction": "first match of upstream ANS_RE after literal #### and one space; remove commas",
+    "numeric_equivalence": false,
+    "missing_prediction_answer": "incorrect",
+    "reference": "separate normalized final number; original solution also preserved"
+  },
+  "unresolved": {
+    "model": null,
+    "tokenizer": null,
+    "chat_template": null,
+    "input_token_lengths": null,
+    "note": "Before inference, freeze model/tokenizer revisions and any Instruct chat-template application, measure actual L, and check the runtime LUT supported range without extrapolation."
+  },
+  "results": {
+    "gpu_inference_performed": false,
+    "fp16_or_group_accuracy_measured": false,
+    "performance_or_qualification_claimed": false
+  }
+}

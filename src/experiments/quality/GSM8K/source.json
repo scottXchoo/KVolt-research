@@ -1,0 +1,27 @@
+{
+  "schema": "kvolt.gsm8k-source.v1",
+  "repository": "https://github.com/openai/grade-school-math",
+  "revision": "3101c7d5072418e28b9008a6636bde82a006892c",
+  "files": {
+    "data/train.jsonl": {
+      "upstream_path": "grade_school_math/data/train.jsonl",
+      "bytes": 4166206,
+      "sha256": "17f347dc51477c50d4efb83959dbb7c56297aba886e5544ee2aaed3024813465",
+      "git_blob_sha1": "7d97154b91aef28d01c3301741c81ce90039a4b1",
+      "rows": 7473
+    },
+    "data/test.jsonl": {
+      "upstream_path": "grade_school_math/data/test.jsonl",
+      "bytes": 749738,
+      "sha256": "3730d312f6e3440559ace48831e51066acaca737f6eabec99bccb9e4b3c39d14",
+      "git_blob_sha1": "e4c2ff4942b9a78bd74f04141224c11e28d12dc9",
+      "rows": 1319
+    },
+    "LICENSE": {
+      "upstream_path": "LICENSE",
+      "bytes": 1062,
+      "sha256": "86bbb73e855821d7c401912fd4bf82e34313e6e3b6fd6f909f2b6cc9e209a53b",
+      "git_blob_sha1": "9e84fcbc4d81a1f433c90caf9f1cef373c12edae"
+    }
+  }
+}
