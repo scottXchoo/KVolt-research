@@ -1,0 +1,94 @@
+{
+  "schema": "kvolt.ruler-representative.v1",
+  "dataset": "RULER legacy v1",
+  "task_names": [
+    "niah_single_1",
+    "niah_multikey_2",
+    "vt",
+    "fwe"
+  ],
+  "rows_per_task": 10,
+  "subset": "validation",
+  "order": "task_names order, then original generated JSONL row order",
+  "id_template": "ruler/{task}/{ordinal:04d}",
+  "generation": {
+    "random_seed": 42,
+    "max_seq_length": 4096,
+    "tokenizer_type": "openai",
+    "tokenizer_path": "cl100k_base",
+    "model_template_type": "base",
+    "chunk_idx": 0,
+    "chunk_amount": 1,
+    "remove_newline_tab": false,
+    "prepare_for_ns": false,
+    "tokens_to_generate": {
+      "niah_single_1": 128,
+      "niah_multikey_2": 128,
+      "vt": 30,
+      "fwe": 50
+    },
+    "task_arguments": {
+      "niah_single_1": {
+        "type_haystack": "noise",
+        "type_needle_k": "words",
+        "type_needle_v": "numbers",
+        "num_needle_k": 1,
+        "num_needle_v": 1,
+        "num_needle_q": 1
+      },
+      "niah_multikey_2": {
+        "type_haystack": "needle",
+        "type_needle_k": "words",
+        "type_needle_v": "numbers",
+        "num_needle_k": 1,
+        "num_needle_v": 1,
+        "num_needle_q": 1
+      },
+      "vt": {
+        "type_haystack": "noise",
+        "num_chains": 1,
+        "num_hops": 4,
+        "add_fewshot": false
+      },
+      "fwe": {
+        "alpha": 2.0,
+        "coded_wordlen": 6,
+        "vocab_size": -1
+      }
+    },
+    "source_length": "upstream length = cl100k token count(input + answer_prefix) + official output reservation; not Llama input L",
+    "source_index": "unmodified upstream index: niah uses first answer character offset; vt/fwe use source row index"
+  },
+  "prompt": {
+    "format": "plain-text completion",
+    "template": "input + answer_prefix",
+    "chat_template": null,
+    "gold_completion_appended": false,
+    "note": "Answers occur inside retrieval contexts by task definition; no separate gold answer is appended."
+  },
+  "inference": {
+    "do_sample": false,
+    "num_beams": 1,
+    "num_return_sequences": 1,
+    "tools": false,
+    "stopping": "natural model/tokenizer EOS or per-task max_new_tokens; no custom stop strings"
+  },
+  "scoring": {
+    "metric": "official string_match_all",
+    "prediction_cleanup": "strip; replace each ASCII control U+0000..U+001F with LF; strip",
+    "per_row": "mean(answer.lower() in cleaned_prediction.lower() for answer in answers), unrounded 0..1",
+    "task_aggregate": "round(mean(per-row score)*100, 2), matching upstream task percentage",
+    "word_boundaries": false,
+    "extra_guesses_penalized": false,
+    "prompt_must_be_excluded_from_prediction": true
+  },
+  "scope": {
+    "purpose": "representative 4-task corpus-free subset for exploratory local execution",
+    "formal_13_task_evaluation": false,
+    "evaluation_plan_frozen": false,
+    "old_kvolt_pilot_inputs": false,
+    "prior_lut_or_qualification_inherited": false,
+    "actual_llama_lengths": "measure after model tokenizer load in runner; preserve cl100k source metadata separately",
+    "gpu_inference_performed": false
+  }
+}

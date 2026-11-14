@@ -1,0 +1,159 @@
+{
+  "schema": "kvolt.ruler-source.v1",
+  "repository": "https://github.com/NVIDIA/RULER",
+  "revision": "c3f5e3b4f87f97e048793bb510a3a6b19a46bf3a",
+  "archive_url": "https://api.github.com/repos/NVIDIA/RULER/tarball/c3f5e3b4f87f97e048793bb510a3a6b19a46bf3a",
+  "archive": {
+    "bytes": 40665,
+    "sha256": "ca7b4ef598e1ee7d221d9eef91ff6a79f0097726a037e34b9c36497acb7da90d"
+  },
+  "upstream_status": "legacy v1; README marks requirements and evaluation scripts deprecated",
+  "acquisition_date": "2026-11-14",
+  "files": {
+    "data/niah_single_1.jsonl": {
+      "bytes": 145741,
+      "sha256": "5ef11bd1006e1af30e57310d4bc813497f94a85333a847ec475f97f4a1f0adf7",
+      "rows": 10,
+      "task": "niah_single_1",
+      "upstream_generated_path": "niah_single_1/validation.jsonl"
+    },
+    "data/niah_multikey_2.jsonl": {
+      "bytes": 137772,
+      "sha256": "8506b75c1c1c775b2d28e126036ff6939ba7c42c5b779a1e8ff0dc7b77dc8f90",
+      "rows": 10,
+      "task": "niah_multikey_2",
+      "upstream_generated_path": "niah_multikey_2/validation.jsonl"
+    },
+    "data/vt.jsonl": {
+      "bytes": 154510,
+      "sha256": "0dd28284869eec63e03ed61ce83cc34b150598212cc5be556fb200019d1ae51c",
+      "rows": 10,
+      "task": "vt",
+      "upstream_generated_path": "vt/validation.jsonl"
+    },
+    "data/fwe.jsonl": {
+      "bytes": 107472,
+      "sha256": "887089e138c9f2507c05226ec3d78257d91ed07bd8501506333f43799ae7eda4",
+      "rows": 10,
+      "task": "fwe",
+      "upstream_generated_path": "fwe/validation.jsonl"
+    },
+    "LICENSE": {
+      "bytes": 11356,
+      "sha256": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1",
+      "upstream_path": "LICENSE"
+    },
+    "generation-requirements.txt": {
+      "bytes": 270,
+      "sha256": "b4f57199384a7901f7a59b8dd1628faffdfbecc2e08ad6daf28914ffd0488b0d"
+    }
+  },
+  "upstream_files": {
+    "LICENSE": {
+      "bytes": 11356,
+      "sha256": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1"
+    },
+    "README.md": {
+      "bytes": 18187,
+      "sha256": "f3aae5bbd58fcd7de32aab099c455dd2bbc1da23a2efee9db3071eb9fbf894a3"
+    },
+    "scripts/data/prepare.py": {
+      "bytes": 6730,
+      "sha256": "f2d210860fbf5c640cb41ed104c7a923c9f4043f6e6c354277daacc73afc643d"
+    },
+    "scripts/data/manifest_utils.py": {
+      "bytes": 1327,
+      "sha256": "ecac79322f28ce9a12388b12e35d560ecb7cdad6b9888467a5a13b0eff2db91e"
+    },
+    "scripts/data/template.py": {
+      "bytes": 1921,
+      "sha256": "2e82d85152212136fffcd5624b158a2c75fd5036ec1c537f4b21eeb78fd18069"
+    },
+    "scripts/data/tokenizer.py": {
+      "bytes": 4075,
+      "sha256": "c2e4bfab607eef87a86334558303c1811bc8e93f22a5c4b129f302726d2357a4"
+    },
+    "scripts/data/synthetic/constants.py": {
+      "bytes": 3052,
+      "sha256": "6296e901d495ec6200dc3f68993ea13d8282e3c0dbe1a8c47967f111105d1fde"
+    },
+    "scripts/data/synthetic/niah.py": {
+      "bytes": 12733,
+      "sha256": "e9cada0a7660d274fe73a1338a90a7087e17b630169f1aaf14a8d3221c6805b5"
+    },
+    "scripts/data/synthetic/variable_tracking.py": {
+      "bytes": 14306,
+      "sha256": "9aac483420e158d116ab63fc43b9606bdb284ac0c053288c30776d5c365530e5"
+    },
+    "scripts/data/synthetic/freq_words_extraction.py": {
+      "bytes": 7766,
+      "sha256": "29b7af97ffdd2122fde348df20cd02add390a21cd6d64b6fd66c8663dc487f67"
+    },
+    "scripts/synthetic.yaml": {
+      "bytes": 2356,
+      "sha256": "34bc71dcacdc41a829a170f04b528fbf48d62c616338005ab4991680fbf8cb0b"
+    },
+    "scripts/eval/evaluate.py": {
+      "bytes": 6934,
+      "sha256": "b9a5fcbded7209663d97670496c74dbcd6358ddbe3d9887a0c5f0c4f974bfe1c"
+    },
+    "scripts/eval/synthetic/constants.py": {
+      "bytes": 1531,
+      "sha256": "6740467c17b8dc06b6b30f4f97e54ce8de81db0dd879f1538d0b6b5727f4bd5f"
+    }
+  },
+  "generation": {
+    "method": "unmodified upstream scripts/data/prepare.py and official task generators",
+    "python": "3.13.2 (v3.13.2:4f8bb3947cf, Feb  4 2025, 11:51:10) [Clang 15.0.0 (clang-1500.3.9.4)]",
+    "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+    "dependencies": [
+      "certifi==2026.10.23",
+      "charset-normalizer==3.5.2",
+      "click==8.5.1",
+      "cloudpickle==3.1.2",
+      "idna==3.20",
+      "joblib==1.6.0",
+      "nltk==3.9.2",
+      "numpy==2.2.6",
+      "PyYAML==6.0.3",
+      "regex==2026.11.9",
+      "requests==2.34.2",
+      "scipy==1.16.3",
+      "tenacity==9.1.2",
+      "tiktoken==0.12.0",
+      "tqdm==4.67.1",
+      "urllib3==2.8.0",
+      "wonderwords==2.2.0"
+    ],
+    "dependency_file": {
+      "path": "generation-requirements.txt",
+      "bytes": 270,
+      "sha256": "b4f57199384a7901f7a59b8dd1628faffdfbecc2e08ad6daf28914ffd0488b0d"
+    },
+    "resources": {
+      "wonderwords/assets/nounlist.txt": {
+        "bytes": 54781,
+        "sha256": "0778f51872f2aa89e0745c0cc37471a13e3d2161a79fcfdc03b6390b10604a55"
+      },
+      "wonderwords/assets/adjectivelist.txt": {
+        "bytes": 7403,
+        "sha256": "66814d46b7e292c83e839d12fe2fa083c8f66779b14b294e1be4e1342c5d4131"
+      },
+      "cl100k_base.tiktoken": {
+        "bytes": 1681126,
+        "sha256": "223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7",
+        "url": "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken"
+      }
+    },
+    "network_required_at_dataset_runtime": false,
+    "external_corpora_required": false,
+    "nltk_note": "prepare.py imports/checks/downloads punkt and punkt_tab despite selected noise/needle tasks not using sentence tokenization; predownload into temporary download_dir for reproduction",
+    "sampling": "official validation samples generated locally, not downloaded pre-generated test data"
+  },
+  "claims": {
+    "formal_13_task_evaluation": false,
+    "old_kvolt_pilot_reused": false,
+    "gpu_inference_performed": false,
+    "quality_or_qualification_claimed": false
+  }
+}
