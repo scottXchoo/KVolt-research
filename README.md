@@ -1,10 +1,27 @@
 # KVolt
 
-Jetson AGX에서 Llama-3.1-8B-Instruct의 Prefill·Decode 설정을 선택하는 실험용 추론 런타임이다.
-PC는 GPU 주파수를, DC는 K2V2 그룹 크기와 GPU 주파수를 선택한다.
+목표 지연 시간 안에서 KV 양자화 그룹 크기와 GPU 주파수를 선택해 에너지와 품질을
+함께 고려하는 온디바이스 LLM 서빙 연구다. 현재 코드는 Jetson AGX에서
+Llama-3.1-8B-Instruct를 실행하는 실험용 런타임이며, PC는 Prefill GPU 주파수,
+DC는 K2V2 그룹 크기와 Decode GPU 주파수를 선택한다.
+
+## 최신 연구 설계: Method V10
+
+2026-11-12 표지의 사용자 제공 Proposal v3.0을
+[Method V10 변경 정리](docs/method-v10.md)에 반영했다 (정리일 2026-11-14).
+[Notion Method V10](https://app.notion.com/p/418e0acd77f88170b082ca031f0624fa)에서도 확인할 수 있다.
+최신 제안은 별도 PC·UME·Estimated 단계가 없는 DC 중심 구조이며,
+Unknown 모델은 기본 DVFS·G_default로 서비스하고 유휴·전원 공급 조건에서
+전체 LUT 실측 후 Accepted로 전환한다. 주 제어 LUT는 Decode·Quality다.
+
+G 선택은 품질 손실/에너지 절감 비율이 최소인 인접 구간의 도착 G를 제안한다 (PDF p19).
+다만 p14~16·20에는 기존 Kneedle이 남아 있어 최종 알고리즘과 예외 처리는 미정이다.
+**이 변경은 연구 설계 문서화이며 현재 코드는 PC·Kneedle·Online LUT를 유지한다.**
+현재 LUT·Reference·버퍼·qualification과 기존 실측을 V10의 구현·검증 결과로 승계하지 않는다.
 
 ## 먼저 찾을 곳
 
+- **최신 연구 변경:** [Method V10·PDF 근거·미정 정책](docs/method-v10.md)
 - **현재 LUT:** [고정 선택 파일](data/luts/current/selection.json) · [원본·단위·SHA 안내](data/luts/README.md)
 - **개발 실행의 최신 기본값:** [Online LUT 피드백](docs/online-lut.md)
 - **문서 탐색:** [주제별 목차](docs/README.md)

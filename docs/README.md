@@ -3,6 +3,10 @@
 [프로젝트 안내](../README.md) · [LUT 원본·현재 선택](../data/luts/README.md) ·
 [도구 안내](../tools/README.md) · [로컬 결과 안내](../artifacts/README.md)
 
+최신 연구 설계는 [Method V10: Proposal v3.0 변경 정리](method-v10.md)다.
+DC 중심 구조·Unknown→Accepted·비율 기반 G 선택 제안과 PDF 내부 충돌을 정리했다.
+코드 반영은 수행하지 않았으며 아래 정책·실행 문서는 현재 구현과 과거 검증의 계약이다.
+
 최신 기본 선택은 `data/luts/current/selection.json`, 개발 실행 기본값은 Online 보정이다.
 TPOT 허용 상한은 원 Reference의 기본1.20배이며 `config.py`의 `TPOT_BUFFER_RATIO`로
 변경한다. 원본 표·TTFT는 보존하고 소스/비율별 qualification을 구분한다.
