@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -13,6 +14,25 @@ from experiments.quality.GSM8K import dataset
 
 
 BUNDLE = Path(dataset.__file__).resolve().parent
+
+
+def test_nested_bundle_layout_and_public_api():
+    assert BUNDLE.name == "dataset"
+    assert BUNDLE.parent.name == "GSM8K"
+    assert sorted(path.name for path in BUNDLE.parent.iterdir()) == ["dataset"]
+    from experiments.quality.GSM8K.dataset import (
+        PINNED_PROTOCOL_SHA256, PINNED_REVISION, PINNED_SOURCE_SHA256,
+        extract_answer, load_dataset, main, score, validate_bundle,
+    )
+
+    assert extract_answer("#### 1,234") == "1234"
+    assert score("#### 18", "18") == 1.0
+    assert load_dataset is dataset.load_dataset
+    assert validate_bundle is dataset.validate_bundle
+    assert main is dataset.main
+    assert PINNED_REVISION == "3101c7d5072418e28b9008a6636bde82a006892c"
+    assert PINNED_SOURCE_SHA256 == "9f31829434a4713b4a27bca61159999668004bddc7bde844b0766c824d06f7cc"
+    assert PINNED_PROTOCOL_SHA256 == "6dd960f1a7eb2076db75bb98cc7d654a25a65837e3d515e5a5d39342d537ca40"
 
 
 @pytest.fixture(scope="module")
@@ -164,6 +184,19 @@ def test_cli_is_offline_and_cwd_independent(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["validated_prompts"] == 1319
+
+
+def test_package_module_cli_from_another_cwd(tmp_path):
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    result = subprocess.run(
+        [sys.executable, "-m", "experiments.quality.GSM8K.dataset", "validate"],
+        cwd=tmp_path, env=environment, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["validated_prompts"] == 1319
+    assert report["prompt_sha256"] == "b9c9766a403fde5512212c66a9b853683e5af8a896ecf491808d5d8eb92c23e1"
 
 
 def test_cli_rejects_invalid_bundle(bundle_copy, tmp_path):

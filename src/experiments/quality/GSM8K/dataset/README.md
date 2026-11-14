@@ -4,7 +4,7 @@
 train의 첫 5개 풀이를 고정 예시로 사용하고, test 전체를 원본 순서대로 평가 입력으로 구성한다.
 이 5-shot은 프로젝트의 로컬 기준선이며 공인된 유일한 GSM8K 프롬프트가 아니다.
 
-이 묶음은 데이터 준비·채점용이다. 기존 `../run.py`의 데이터/채점 TODO를 연결하거나
+이 묶음은 데이터 준비·채점용이다. 기존 `../../run.py`의 데이터/채점 TODO를 연결하거나
 모델·G·주파수를 선택하지 않는다. RULER, LUT 원본, Runtime, Method V10의 미정 정책과
 기존 qualification은 변경하지 않는다. GPU 추론, FP16/G별 정확도·지연·에너지 측정은 수행하지 않았다.
 
@@ -33,7 +33,8 @@ train의 첫 5개 풀이를 고정 예시로 사용하고, test 전체를 원본
 저장소 루트에서 실행한다. Python 표준 라이브러리만 필요하며 네트워크·모델 다운로드는 없다.
 
 ```sh
-python3 src/experiments/quality/GSM8K/dataset.py validate
+python3 src/experiments/quality/GSM8K/dataset/dataset.py validate
+PYTHONPATH=src python3 -m experiments.quality.GSM8K.dataset validate
 PYTHONPATH=src python3 - <<'PY'
 from experiments.quality.GSM8K.dataset import load_dataset, score
 
