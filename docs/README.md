@@ -35,6 +35,7 @@ TPOT 허용 상한은 원 Reference의 기본1.20배이며 `config.py`의 `TPOT_
 | [runtime-run-cli.md](runtime-run-cli.md) | 실제 실행 옵션, 준비·출력·종료 코드 |
 | [runtime-device.md](runtime-device.md) | 장비 소유, GPU 적용·검증·복원과 프로필 |
 | [runtime-measurement.md](runtime-measurement.md) | t0/t1/tN, 메모리 진단과 INA3221 에너지 |
+| [독립 실험 에너지 계측](../src/experiments/energy/README.md) | 선택적으로 붙이는 EnergyMeter·sleep 데모·원시 trace 저장 |
 
 ## 적격성·검증·TPOT 분석
 

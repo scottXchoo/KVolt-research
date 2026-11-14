@@ -26,6 +26,7 @@ G 선택은 품질 손실/에너지 절감 비율이 최소인 인접 구간의 
 - **개발 실행의 최신 기본값:** [Online LUT 피드백](docs/online-lut.md)
 - **문서 탐색:** [주제별 목차](docs/README.md)
 - **보조 도구:** [기능과 실행 조건](tools/README.md)
+- **독립 에너지 계측:** [실험에 붙이는 EnergyMeter 스켈레톤](src/experiments/energy/README.md)
 - **로컬 결과:** [최신 검증과 과거 기록](artifacts/README.md)
 - **작업 규칙:** [AGENTS.md](AGENTS.md)
 
