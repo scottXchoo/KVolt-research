@@ -1,13 +1,14 @@
 # GSM8K KIVI Llama 실행 스켈레톤
 
 `KIVI_Llama.py`는 로컬 검증된 GSM8K main/test 1,319문항을 순서대로 생성하고
-정답을 채점한다. 기본 모델은 **base** `meta-llama/Llama-3.1-8B`이며,
+정답을 채점한다. 기본 모델은 `meta-llama/Llama-3.1-8B-Instruct`이며,
 `model.kivi_llama.load_model/generate`를 재사용한다.
 
 고정 조건은 FP16 가중치, K2V2·G32·residual128, train의 첫 5문항 CoT,
 greedy·beam1·한 출력·자연 EOS·최대 신규 512토큰이다. 원본 plain-text prompt를
-그대로 전달하며 chat template를 적용하지 않는다. `--model-name`은 base 모델 ID나
-로컬 경로를 받는다. Instruct 프롬프트 적용·호환성을 검증한 실행기는 아니다.
+그대로 전달하며 chat template를 적용하지 않는다. `--model-name`은 Instruct 모델 ID나
+로컬 경로를 받는다. Instruct 모델의 plain-text 생성은 AGX2 소수 문항에서 확인했다.
+chat-template 프로토콜과 정식 평가는 별도다.
 데이터 출처·고정 protocol·정답 추출 규칙은 [dataset/README.md](dataset/README.md)를 따른다.
 
 ## 실행
@@ -48,6 +49,9 @@ import와 `--help`는 GPU 패키지를 로드하지 않는다.
 
 생성 오류는 실행을 중단하고 이미 기록된 JSONL을 보존한다. 자동 재시도·이어하기는 없으며
 실패한 실행에는 완료 summary를 만들지 않는다. 새 디렉터리에서 다시 실행한다.
+
+기존 AGX2 기능 검증은 `ec21d1e`에서 명시 Instruct snapshot으로 첫 3문항을 실행한 기록이다.
+이번 기본 모델 ID 교정을 새 커밋의 GPU 실측으로 다시 표시하지 않는다.
 
 별도 탐색용 품질 실험이다. 모델/tokenizer revision과 실제 입력 토큰 길이를 동결·기록하는
 정식 평가 harness는 아니다. Runtime·LUT·V10 제어 정책·qualification을 변경하거나 승계하지

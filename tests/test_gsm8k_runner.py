@@ -52,7 +52,7 @@ def test_run_preserves_continuation_scores_and_fixed_settings(tmp_path, fake_bac
     }
     assert rows[1]["score"] == rows[2]["score"] == 0.0
     assert rows[2]["predicted_answer"] is None
-    assert fake_backend[0] == ("load", "meta-llama/Llama-3.1-8B", {
+    assert fake_backend[0] == ("load", "meta-llama/Llama-3.1-8B-Instruct", {
         "k_bits": 2, "v_bits": 2, "group_size": 32, "residual_length": 128,
     })
     for call, record in zip(fake_backend[1:], records):
@@ -74,10 +74,10 @@ def test_run_preserves_continuation_scores_and_fixed_settings(tmp_path, fake_bac
 
 def test_default_evaluates_all_records(tmp_path, monkeypatch, fake_backend):
     monkeypatch.setattr(runner.kivi_llama, "generate", lambda *args, **kwargs: "#### 0")
-    summary = runner.run(tmp_path / "full", model_name="/local/base-llama")
+    summary = runner.run(tmp_path / "full", model_name="/local/instruct-llama")
     assert summary["evaluated"] == 1319
     assert summary["subset"] is False
-    assert fake_backend[0][1] == "/local/base-llama"
+    assert fake_backend[0][1] == "/local/instruct-llama"
 
 
 @pytest.mark.parametrize("limit", [0, -1, True, 1.5, "2", 1320])

@@ -1,4 +1,4 @@
-"""Run the pinned GSM8K 5-shot completion baseline with KIVI Llama."""
+"""Run the pinned GSM8K 5-shot completion baseline with KIVI Llama Instruct."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from experiments.quality.GSM8K.dataset import (
 from model import kivi_llama
 
 
-MODEL_NAME = "meta-llama/Llama-3.1-8B"
+MODEL_NAME = "meta-llama/Llama-3.1-8B-Instruct"
 KV_SETTINGS = {"k_bits": 2, "v_bits": 2, "group_size": 32, "residual_length": 128}
 MAX_NEW_TOKENS = 512
 
@@ -103,7 +103,7 @@ def _positive_int(value: str) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--limit", type=_positive_int, help="first N test rows; default: all 1319")
-    parser.add_argument("--model-name", default=MODEL_NAME, help="base Llama model ID or local path")
+    parser.add_argument("--model-name", default=MODEL_NAME, help="Instruct model ID or local path; default: %(default)s")
     parser.add_argument("--output-dir", type=Path, help="new directory; must not already exist")
     args = parser.parse_args(argv)
     output = args.output_dir or Path("artifacts/gsm8k") / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")

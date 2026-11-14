@@ -1,8 +1,8 @@
-"""Minimal KIVI + Llama-3.1-8B quality experiment; dataset and metric are TODO."""
+"""Minimal KIVI + Llama-3.1-8B-Instruct quality experiment; data and metric are TODO."""
 
 from model.kivi_llama import load_model, generate
 
-MODEL_NAME = "meta-llama/Llama-3.1-8B"  # Base model, not Instruct.
+MODEL_NAME = "meta-llama/Llama-3.1-8B-Instruct"
 K_BITS = 2
 V_BITS = 2
 GROUP_SIZE = 32
@@ -11,7 +11,11 @@ MAX_NEW_TOKENS = 128
 
 
 def load_dataset() -> list[dict[str, str]]:
-    """Return records with a complete base-model prompt and a reference answer."""
+    """Return complete Instruct-model inputs and separate reference answers.
+
+    The experiment loader prepares its input format, including any chat template.
+    The shared generation helper receives that finished prompt unchanged.
+    """
     # TODO: Choose a dataset and map its rows to {"prompt": str, "answer": str}.
     raise NotImplementedError("TODO: choose and load the quality dataset")
 
